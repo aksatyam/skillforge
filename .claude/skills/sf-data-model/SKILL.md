@@ -66,15 +66,20 @@ Application sets `app.current_org_id` per-connection at the start of each reques
 - **Never** skip the `deleted_at` soft-delete column — DPDP right-to-erasure may require hard deletes later, but default to soft.
 - JSONB columns must have a zod/TypeScript type contract documented alongside the entity.
 
-## Learning opportunity
+## Decided (Sprint 0)
 
-**Question**: Two decisions I want your call on before generating migrations:
+- **ORM**: Prisma (see ADR-001). Schema at `packages/db/prisma/schema.prisma` is the source of truth.
+- **Tenancy**: RLS on single schema (see ADR-002). `app.current_org_id` GUC set via `withTenant()`.
+- **Baseline**: `0001_init/migration.sql` has all CREATE TABLE DDL. `0002_enable_rls/migration.sql` adds policies.
 
-1. **ORM**: TypeORM (mature, decorators, used in NestJS examples) vs Prisma (better DX, generated types, migration tooling). The plan doesn't specify. Which do you want the reference implementation to use?
+## When to write a new migration
 
-2. **Tenant isolation strategy**: 
-   - (a) **Schema-per-tenant** — one Postgres schema per org. True isolation, harder to query cross-tenant for aggregations, harder to migrate.
-   - (b) **Row-level tenancy with RLS** — single schema, `org_id` everywhere, RLS policies. Easier ops, cheaper migrations, slightly higher risk of leak if RLS misconfigured.
-   - The plan says schema-per-tenant in §3.3 but row-level is more common for early-stage SaaS.
+Run `pnpm --filter @skillforge/db migrate:dev -- --name <short_slug>` to auto-generate from schema.prisma diff. If the migration involves RLS changes (new tenant-scoped table), add the policy manually to the generated SQL file before committing.
 
-Pick per project context — these choices lock in how every subsequent migration is written.
+## New tenant-scoped table checklist
+
+- [ ] Schema.prisma model has `orgId String @map("org_id") @db.Uuid` + `@@index([orgId])`
+- [ ] FK to `organizations` with `onDelete: Cascade`
+- [ ] Standard audit columns: `createdAt`, `updatedAt`, `deletedAt` (nullable)
+- [ ] RLS policy: `ENABLE + FORCE RLS`, then `CREATE POLICY tenant_isolation ON <table> USING (org_id = current_org_id())`
+- [ ] If the table is append-only (like `audit_log`): split into `FOR SELECT USING (...)` + `FOR INSERT WITH CHECK (...)` with NO update/delete policies

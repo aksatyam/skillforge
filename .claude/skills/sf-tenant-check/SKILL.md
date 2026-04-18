@@ -33,6 +33,20 @@ Frontend TanStack Query keys like `['assessments']` leak cache across tenants. M
 
 Claude calls must strip names/emails. Flag any `prompts/**/*.md` or `*.ts` that references `user.name`, `user.email`, `user.phone` directly without going through `anonymize()`.
 
+### Pattern 6 — `prismaAdmin` imports outside allowlist
+
+`prismaAdmin` from `@skillforge/db` is BYPASSRLS. It may only be imported from:
+- `services/*/src/auth/**`
+- `services/*/src/common/interceptors/audit-log.interceptor.ts`
+- `packages/tenant-guard/src/index.ts`
+- `packages/db/prisma/seed.ts`
+
+Any other import of `prismaAdmin` is a privilege escalation risk.
+
+### Pattern 7 — `withoutTenant` outside super_admin routes
+
+`withoutTenant` from `@skillforge/tenant-guard` must only be called from routes with both `@Roles('super_admin')` AND `@AllowCrossTenant()`. Any call without both decorators is a bug.
+
 ## Scan commands
 
 ```bash
@@ -55,6 +69,16 @@ rg -t tsx -t ts -n "queryKey:\s*\[['\"]" frontend/ \
 # Pattern 5 — PII in prompts
 rg -n "user\.(name|email|phone)" backend/services/ai-evaluation/prompts/ backend/services/ai-evaluation/src/ \
   | rg -v "anonymize|stripPii|sha256"
+
+# Pattern 6 — prismaAdmin imports outside allowlist
+rg -l "from '@skillforge/db'" services/ apps/ packages/ \
+  | xargs -I{} sh -c 'grep -l "prismaAdmin" "{}"' \
+  | grep -vE "services/[^/]+/src/auth/|services/[^/]+/src/common/interceptors/audit-log|packages/tenant-guard/src/index|packages/db/prisma/seed" \
+  || echo "no violations"
+
+# Pattern 7 — withoutTenant usages missing super_admin + cross-tenant decorators
+rg -B5 "withoutTenant\s*\(" services/ apps/ \
+  | grep -v -B2 "@AllowCrossTenant\|@Roles.*super_admin"
 ```
 
 ## Workflow

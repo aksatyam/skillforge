@@ -64,15 +64,22 @@ backend/services/<service-name>/
 - DTOs must use `class-validator` with strict types — no `any`, no optional `orgId` (it's injected server-side from the JWT).
 - Audit-logged actions (score writes, cycle transitions, AI overrides) go through `AuditLogInterceptor`.
 
-## Learning opportunity — you decide
+## Canonical guard chain (Sprint 1 implementation)
 
-Before I generate the guards, I need your input on **one key design choice**:
+The guard chain is registered globally in `app.module.ts` via `APP_GUARD`. Order matters:
 
-**Question**: How should `TenantGuard` handle the case where a user's JWT claims `org_id=A` but the request URL path includes `/orgs/B/...`?
+1. **JwtAuthGuard** — verifies JWT, attaches `req.user` + `req.orgId`. Respects `@Public()`.
+2. **TenantGuard** — if URL path has `:orgId`, must match JWT `orgId`. Returns **404 Not Found** on mismatch (not 403 — avoids tenant enumeration). `@AllowCrossTenant()` routes require `super_admin` role.
+3. **RbacGuard** — checks `@Roles(...)` metadata.
 
-Three valid approaches:
-1. **Reject hard (403)** — safest, but breaks admin UX for legit super-admins.
-2. **Allow if role = `super_admin` AND audit-log the cross-tenant access** — matches §7.4 audit principles but adds a role check at the guard layer.
-3. **Silently rewrite to JWT `org_id`** — user-friendly but hides bugs and creates security ambiguity.
+Every new service scaffold inherits this chain. Don't register local `@UseGuards()` — it's already global.
 
-This choice propagates across every service we scaffold. Tell me which you want, or describe a fourth approach, and I'll implement it consistently.
+## DB access pattern
+
+- For **tenant-scoped work** (99% of cases): inject nothing; import `withTenant` + `TenantId` from `@skillforge/tenant-guard`, take `@CurrentTenant() orgId: TenantId` on controller methods, pass to service.
+- For **pre-tenant / append-only work** (login, audit, seed): import `prismaAdmin` from `@skillforge/db`. See `reference_admin_client_pattern.md` memory.
+
+## Required endpoints on every new service
+
+- `GET /health` (public) — returns `{ status, service, version, uptimeSec, timestamp, checks }`
+- Swagger at `/api/docs` via `@nestjs/swagger` with `addBearerAuth()`
