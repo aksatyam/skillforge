@@ -1,6 +1,6 @@
 import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { prisma } from '@skillforge/db';
+import { prismaAdmin, Prisma } from '@skillforge/db';
 import type { AuthTokens, MeResponse } from '@skillforge/shared-types';
 import { withTenant, TenantId } from '@skillforge/tenant-guard';
 import * as bcrypt from 'bcrypt';
@@ -8,103 +8,95 @@ import * as crypto from 'node:crypto';
 
 const INVITE_TTL_DAYS = 7;
 
+/**
+ * Auth service. Uses `prismaAdmin` (BYPASSRLS role) for pre-tenant flows
+ * because we don't yet know which tenant the user belongs to. See
+ * packages/db/src/index.ts for the admin-client rationale.
+ */
 @Injectable()
 export class AuthService {
   constructor(private readonly jwt: JwtService) {}
 
   /**
    * Dev/Phase-1 login: email + password → JWT.
-   * In Phase 2 this is replaced by Keycloak OIDC; this service keeps issuing
-   * our own JWTs with tenant + role claims baked in.
+   * Replaced by Keycloak OIDC in Phase 2; this service still issues its
+   * own short-lived JWT with tenant + role claims baked in.
    */
   async login(email: string, password: string): Promise<AuthTokens> {
-    // No tenant context at login — use a raw query so RLS doesn't block.
-    // This is the ONE place we bypass tenant isolation for reads; it's safe
-    // because email+password is the narrowest possible query.
-    const rows = await prisma.$queryRawUnsafe<
-      Array<{
-        id: string;
-        org_id: string;
-        email: string;
-        role: string;
-        password_hash: string | null;
-        invite_accepted_at: Date | null;
-      }>
-    >(
-      `SELECT id, org_id, email, role::text as role, password_hash, invite_accepted_at
-         FROM users
-        WHERE email = $1 AND deleted_at IS NULL
-        LIMIT 1`,
-      email,
-    );
+    const user = await prismaAdmin.user.findFirst({
+      where: { email, deletedAt: null },
+      select: {
+        id: true,
+        orgId: true,
+        email: true,
+        role: true,
+        passwordHash: true,
+        inviteAcceptedAt: true,
+      },
+    });
 
-    // Uniform error to avoid email enumeration
     const invalid = new UnauthorizedException('Invalid credentials');
-    if (rows.length === 0) throw invalid;
-    const u = rows[0];
-    if (!u.password_hash) throw invalid;
-    if (!u.invite_accepted_at) {
-      throw new UnauthorizedException('Invite not yet accepted — please set your password first');
+    if (!user || !user.passwordHash) throw invalid;
+    if (!user.inviteAcceptedAt) {
+      throw new UnauthorizedException(
+        'Invite not yet accepted — please set your password first',
+      );
     }
 
-    const ok = await bcrypt.compare(password, u.password_hash);
+    const ok = await bcrypt.compare(password, user.passwordHash);
     if (!ok) throw invalid;
 
-    // Stamp last_login_at (best-effort, outside tenant context)
-    await prisma.$executeRawUnsafe(
-      `UPDATE users SET last_login_at = now() WHERE id = $1`,
-      u.id,
-    );
+    await prismaAdmin.user.update({
+      where: { id: user.id },
+      data: { lastLoginAt: new Date() },
+    });
 
     return this.issueTokens({
-      sub: u.id,
-      orgId: u.org_id,
-      email: u.email,
-      role: u.role,
+      sub: user.id,
+      orgId: user.orgId,
+      email: user.email,
+      role: user.role,
     });
   }
 
   async refresh(refreshToken: string): Promise<AuthTokens> {
     const hash = crypto.createHash('sha256').update(refreshToken).digest('hex');
 
-    const row = await prisma.refreshToken.findUnique({ where: { tokenHash: hash } });
-    if (!row || row.revokedAt || row.expiresAt < new Date()) {
-      throw new UnauthorizedException('Invalid or expired refresh token');
-    }
+    return prismaAdmin.$transaction(async (tx) => {
+      const row = await tx.refreshToken.findUnique({ where: { tokenHash: hash } });
+      if (!row || row.revokedAt || row.expiresAt < new Date()) {
+        throw new UnauthorizedException('Invalid or expired refresh token');
+      }
 
-    await prisma.refreshToken.update({
-      where: { tokenHash: hash },
-      data: { revokedAt: new Date() },
-    });
+      await tx.refreshToken.update({
+        where: { tokenHash: hash },
+        data: { revokedAt: new Date() },
+      });
 
-    const [u] = await prisma.$queryRawUnsafe<
-      Array<{ id: string; org_id: string; email: string; role: string }>
-    >(
-      `SELECT id, org_id, email, role::text as role FROM users WHERE id = $1 AND deleted_at IS NULL`,
-      row.userId,
-    );
-    if (!u) throw new UnauthorizedException();
+      const user = await tx.user.findFirst({
+        where: { id: row.userId, deletedAt: null },
+        select: { id: true, orgId: true, email: true, role: true },
+      });
+      if (!user) throw new UnauthorizedException();
 
-    return this.issueTokens({
-      sub: u.id,
-      orgId: u.org_id,
-      email: u.email,
-      role: u.role,
+      return this.issueTokensInTx(tx, {
+        sub: user.id,
+        orgId: user.orgId,
+        email: user.email,
+        role: user.role,
+      });
     });
   }
 
   async logout(refreshToken: string): Promise<void> {
     const hash = crypto.createHash('sha256').update(refreshToken).digest('hex');
-    await prisma.refreshToken.updateMany({
+    await prismaAdmin.refreshToken.updateMany({
       where: { tokenHash: hash, revokedAt: null },
       data: { revokedAt: new Date() },
     });
   }
 
-  /**
-   * Returns the current authenticated user with their tenant + org name.
-   * Used by the frontend shell to render the sidebar and role-gated nav.
-   */
+  /** Current user + tenant display info. Uses withTenant — JWT is validated. */
   async me(orgId: TenantId, userId: string): Promise<MeResponse> {
     return withTenant(orgId, async (tx) => {
       const user = await tx.user.findUnique({
@@ -130,77 +122,77 @@ export class AuthService {
   // ── Invite flow ────────────────────────────────────────────────
 
   /**
-   * Generates a one-time invite token + hash for a freshly-created user row.
-   * Returns the RAW token to the caller (to email/share) and persists only the
-   * SHA-256 hash on the user row.
+   * Generate a one-time invite token for a user. Caller must pass orgId;
+   * we verify the user belongs to that tenant before issuing the token.
+   * Uses admin client because the update must succeed even if RLS would
+   * otherwise filter (e.g., HR's tenant context matches — but defense in depth).
    */
-  async issueInviteToken(userId: string): Promise<{ token: string; expiresAt: Date }> {
+  async issueInviteToken(
+    orgId: TenantId,
+    userId: string,
+  ): Promise<{ token: string; expiresAt: Date }> {
     const token = crypto.randomBytes(32).toString('base64url');
     const hash = crypto.createHash('sha256').update(token).digest('hex');
     const expiresAt = new Date(Date.now() + INVITE_TTL_DAYS * 24 * 60 * 60 * 1000);
 
-    await prisma.$executeRawUnsafe(
-      `UPDATE users
-          SET invite_token_hash = $1,
-              invite_expires_at = $2,
-              invite_accepted_at = NULL
-        WHERE id = $3`,
-      hash,
-      expiresAt,
-      userId,
-    );
+    const result = await prismaAdmin.user.updateMany({
+      where: { id: userId, orgId, deletedAt: null },
+      data: {
+        inviteTokenHash: hash,
+        inviteExpiresAt: expiresAt,
+        inviteAcceptedAt: null,
+      },
+    });
+    if (result.count === 0) {
+      throw new BadRequestException('User not found in this tenant');
+    }
 
     return { token, expiresAt };
   }
 
   /**
-   * User clicks invite link, submits token + new password.
-   * Validates, sets password_hash, marks invite accepted, issues JWTs.
+   * Accept invite: validate token, set password, issue JWTs. All atomic in
+   * a single transaction so a crash mid-flow leaves no half-committed state.
    */
   async acceptInvite(token: string, password: string): Promise<AuthTokens> {
     const hash = crypto.createHash('sha256').update(token).digest('hex');
 
-    const rows = await prisma.$queryRawUnsafe<
-      Array<{
-        id: string;
-        org_id: string;
-        email: string;
-        role: string;
-        invite_expires_at: Date | null;
-        invite_accepted_at: Date | null;
-      }>
-    >(
-      `SELECT id, org_id, email, role::text as role, invite_expires_at, invite_accepted_at
-         FROM users
-        WHERE invite_token_hash = $1 AND deleted_at IS NULL
-        LIMIT 1`,
-      hash,
-    );
+    return prismaAdmin.$transaction(async (tx) => {
+      const user = await tx.user.findFirst({
+        where: { inviteTokenHash: hash, deletedAt: null },
+        select: {
+          id: true,
+          orgId: true,
+          email: true,
+          role: true,
+          inviteExpiresAt: true,
+          inviteAcceptedAt: true,
+        },
+      });
 
-    if (rows.length === 0) throw new BadRequestException('Invalid or expired invite');
-    const u = rows[0];
-    if (u.invite_accepted_at) throw new BadRequestException('Invite already accepted');
-    if (!u.invite_expires_at || u.invite_expires_at < new Date()) {
-      throw new BadRequestException('Invite has expired — ask HR to re-issue');
-    }
+      if (!user) throw new BadRequestException('Invalid or expired invite');
+      if (user.inviteAcceptedAt) throw new BadRequestException('Invite already accepted');
+      if (!user.inviteExpiresAt || user.inviteExpiresAt < new Date()) {
+        throw new BadRequestException('Invite has expired — ask HR to re-issue');
+      }
 
-    const passwordHash = await bcrypt.hash(password, 10);
-    await prisma.$executeRawUnsafe(
-      `UPDATE users
-          SET password_hash = $1,
-              invite_accepted_at = now(),
-              invite_token_hash = NULL,
-              invite_expires_at = NULL
-        WHERE id = $2`,
-      passwordHash,
-      u.id,
-    );
+      const passwordHash = await bcrypt.hash(password, 10);
+      await tx.user.update({
+        where: { id: user.id },
+        data: {
+          passwordHash,
+          inviteAcceptedAt: new Date(),
+          inviteTokenHash: null,
+          inviteExpiresAt: null,
+        },
+      });
 
-    return this.issueTokens({
-      sub: u.id,
-      orgId: u.org_id,
-      email: u.email,
-      role: u.role,
+      return this.issueTokensInTx(tx, {
+        sub: user.id,
+        orgId: user.orgId,
+        email: user.email,
+        role: user.role,
+      });
     });
   }
 
@@ -212,6 +204,13 @@ export class AuthService {
     email: string;
     role: string;
   }): Promise<AuthTokens> {
+    return prismaAdmin.$transaction((tx) => this.issueTokensInTx(tx, payload));
+  }
+
+  private async issueTokensInTx(
+    tx: Prisma.TransactionClient,
+    payload: { sub: string; orgId: string; email: string; role: string },
+  ): Promise<AuthTokens> {
     const accessTtl = Number(process.env.JWT_ACCESS_TTL ?? 900);
     const refreshTtl = Number(process.env.JWT_REFRESH_TTL ?? 604800);
 
@@ -219,7 +218,7 @@ export class AuthService {
 
     const refreshToken = crypto.randomBytes(48).toString('base64url');
     const hash = crypto.createHash('sha256').update(refreshToken).digest('hex');
-    await prisma.refreshToken.create({
+    await tx.refreshToken.create({
       data: {
         userId: payload.sub,
         tokenHash: hash,

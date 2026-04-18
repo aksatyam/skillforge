@@ -7,6 +7,7 @@ import {
   type CreateFrameworkDto,
 } from '@skillforge/shared-types';
 import { useCreateFramework } from '@/hooks/use-frameworks';
+import { useMe } from '@/hooks/use-me';
 import { useRouter } from 'next/navigation';
 import { Plus, X } from 'lucide-react';
 
@@ -25,6 +26,15 @@ const DEFAULT_LEVELS = [
 export default function NewFrameworkPage() {
   const router = useRouter();
   const createMut = useCreateFramework();
+  const me = useMe();
+
+  if (me.data && me.data.role !== 'hr_admin' && me.data.role !== 'super_admin') {
+    return (
+      <div className="rounded-md bg-amber-50 p-4 text-amber-900">
+        HR admin access only.
+      </div>
+    );
+  }
 
   const {
     register,

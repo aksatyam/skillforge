@@ -47,29 +47,45 @@ for i in $(seq 1 15); do
   sleep 1
 done
 
-# Create DB + user if missing
+# Create DB + two roles:
+#   skillforge       - application role, RLS-enforced
+#   skillforge_admin - admin role, BYPASSRLS (used for auth flows + audit writes)
 PGUSER_DEFAULT="${USER}"
-SKILLFORGE_USER="skillforge"
-SKILLFORGE_PASS="skillforge"
+SKILLFORGE_APP_USER="skillforge"
+SKILLFORGE_APP_PASS="skillforge"
+SKILLFORGE_ADMIN_USER="skillforge_admin"
+SKILLFORGE_ADMIN_PASS="skillforge_admin"
 SKILLFORGE_DB="skillforge"
 SKILLFORGE_SHADOW_DB="skillforge_shadow"
 
-if ! psql -U "$PGUSER_DEFAULT" -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='$SKILLFORGE_USER'" 2>/dev/null | grep -q 1; then
-  info "Creating role $SKILLFORGE_USER…"
-  psql -U "$PGUSER_DEFAULT" -d postgres -c "CREATE ROLE $SKILLFORGE_USER WITH LOGIN PASSWORD '$SKILLFORGE_PASS' CREATEDB;" >/dev/null
-  ok "Created role $SKILLFORGE_USER"
-else
-  ok "Role $SKILLFORGE_USER exists"
-fi
+for role_info in "$SKILLFORGE_APP_USER:$SKILLFORGE_APP_PASS:no" "$SKILLFORGE_ADMIN_USER:$SKILLFORGE_ADMIN_PASS:yes"; do
+  IFS=: read -r role pass bypass <<<"$role_info"
+  if ! psql -U "$PGUSER_DEFAULT" -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='$role'" 2>/dev/null | grep -q 1; then
+    info "Creating role $role…"
+    psql -U "$PGUSER_DEFAULT" -d postgres -c "CREATE ROLE $role WITH LOGIN PASSWORD '$pass' CREATEDB;" >/dev/null
+    ok "Created role $role"
+  else
+    ok "Role $role exists"
+  fi
+  if [ "$bypass" = "yes" ]; then
+    psql -U "$PGUSER_DEFAULT" -d postgres -c "ALTER ROLE $role BYPASSRLS;" >/dev/null
+    ok "Granted BYPASSRLS to $role"
+  fi
+done
 
 for db in "$SKILLFORGE_DB" "$SKILLFORGE_SHADOW_DB"; do
   if ! psql -U "$PGUSER_DEFAULT" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$db'" 2>/dev/null | grep -q 1; then
     info "Creating database $db…"
-    psql -U "$PGUSER_DEFAULT" -d postgres -c "CREATE DATABASE $db OWNER $SKILLFORGE_USER;" >/dev/null
+    psql -U "$PGUSER_DEFAULT" -d postgres -c "CREATE DATABASE $db OWNER $SKILLFORGE_ADMIN_USER;" >/dev/null
     ok "Created database $db"
   else
     ok "Database $db exists"
   fi
+  # Ensure app role can use the DB (RLS will still filter their queries)
+  psql -U "$PGUSER_DEFAULT" -d postgres -c "GRANT ALL PRIVILEGES ON DATABASE $db TO $SKILLFORGE_APP_USER;" >/dev/null
+  psql -U "$PGUSER_DEFAULT" -d "$db" -c "GRANT ALL ON SCHEMA public TO $SKILLFORGE_APP_USER;" >/dev/null
+  psql -U "$PGUSER_DEFAULT" -d "$db" -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO $SKILLFORGE_APP_USER;" >/dev/null
+  psql -U "$PGUSER_DEFAULT" -d "$db" -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO $SKILLFORGE_APP_USER;" >/dev/null
 done
 
 # Ensure pgcrypto extension for gen_random_uuid()

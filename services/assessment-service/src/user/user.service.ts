@@ -116,7 +116,7 @@ export class UserService {
       });
     });
 
-    const invite = await this.auth.issueInviteToken(user.id);
+    const invite = await this.auth.issueInviteToken(orgId, user.id);
 
     return {
       user: toResponse(user),
@@ -128,7 +128,7 @@ export class UserService {
   async reissueInvite(orgId: TenantId, userId: string) {
     // Confirm user exists in tenant before reissuing (RLS will 404 silently otherwise)
     await this.get(orgId, userId);
-    return this.auth.issueInviteToken(userId);
+    return this.auth.issueInviteToken(orgId, userId);
   }
 
   async update(

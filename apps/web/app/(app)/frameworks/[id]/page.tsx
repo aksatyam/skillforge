@@ -4,6 +4,7 @@ import { useParams } from 'next/navigation';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
 import {
   UpsertRoleMappingDtoSchema,
   type UpsertRoleMappingDto,
@@ -145,13 +146,18 @@ function RoleMappingForm({
   onSubmit: (dto: UpsertRoleMappingDto) => Promise<void>;
   maxLevel: number;
 }) {
+  // Intersect the global schema with a dynamic target-level bound
+  // so the form validates against the actual framework's ladder size.
+  const dynamicSchema = UpsertRoleMappingDtoSchema.and(
+    z.object({ targetLevel: z.number().int().min(1).max(maxLevel) }),
+  );
   const {
     register,
     handleSubmit,
     formState: { errors, isSubmitting },
     reset,
   } = useForm<UpsertRoleMappingDto>({
-    resolver: zodResolver(UpsertRoleMappingDtoSchema),
+    resolver: zodResolver(dynamicSchema),
     defaultValues: {
       roleFamily: '',
       targetLevel: 3,

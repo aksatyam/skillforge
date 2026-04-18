@@ -34,7 +34,7 @@ export default function FrameworksPage() {
       {isLoading ? (
         <div className="text-brand-medium">Loading…</div>
       ) : frameworks.length === 0 ? (
-        <EmptyState />
+        <EmptyState canEdit={canEdit} />
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {frameworks.map((fw) => (
@@ -75,19 +75,23 @@ function StatusBadge({ status }: { status: 'draft' | 'active' | 'archived' }) {
   );
 }
 
-function EmptyState() {
+function EmptyState({ canEdit }: { canEdit: boolean }) {
   return (
     <div className="rounded-lg border-2 border-dashed border-neutral-200 p-12 text-center">
       <h3 className="text-lg font-semibold text-brand-dark">No frameworks yet</h3>
       <p className="mt-1 text-sm text-brand-medium">
-        Start by creating the Qualtech AI Capability Maturity Model.
+        {canEdit
+          ? 'Start by creating the Qualtech AI Capability Maturity Model.'
+          : 'Your HR admin has not published an assessment framework yet.'}
       </p>
-      <Link
-        href="/frameworks/new"
-        className="mt-4 inline-flex items-center gap-2 rounded-md bg-brand-navy px-4 py-2 text-sm font-semibold text-white"
-      >
-        <Plus size={16} /> Create framework
-      </Link>
+      {canEdit && (
+        <Link
+          href="/frameworks/new"
+          className="mt-4 inline-flex items-center gap-2 rounded-md bg-brand-navy px-4 py-2 text-sm font-semibold text-white"
+        >
+          <Plus size={16} /> Create framework
+        </Link>
+      )}
     </div>
   );
 }

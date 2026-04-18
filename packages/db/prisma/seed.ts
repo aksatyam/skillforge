@@ -18,7 +18,13 @@
 import { PrismaClient, UserRole, FrameworkStatus, CycleStatus } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
-const prisma = new PrismaClient();
+// Seed uses the admin connection string (BYPASSRLS role) so INSERTs
+// aren't filtered by tenant policies. Falls back to DATABASE_URL.
+const prisma = new PrismaClient({
+  datasources: {
+    db: { url: process.env.DATABASE_URL_ADMIN ?? process.env.DATABASE_URL! },
+  },
+});
 
 // Dev-only seed password. Real Qualtech users will be invited and set their own.
 const DEV_PASSWORD = 'Passw0rd!';

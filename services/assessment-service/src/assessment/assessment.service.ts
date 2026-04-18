@@ -1,8 +1,10 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { withTenant, type TenantId } from '@skillforge/tenant-guard';
-import type {
-  SubmitSelfAssessmentDto,
-  SubmitManagerAssessmentDto,
+import {
+  AssessmentWeightsSchema,
+  DEFAULT_ASSESSMENT_WEIGHTS,
+  type SubmitSelfAssessmentDto,
+  type SubmitManagerAssessmentDto,
 } from '@skillforge/shared-types';
 import { ScoringService } from './scoring.service';
 
@@ -15,7 +17,20 @@ import { ScoringService } from './scoring.service';
  */
 @Injectable()
 export class AssessmentService {
+  private readonly logger = new Logger(AssessmentService.name);
   constructor(private readonly scoring: ScoringService) {}
+
+  private resolveWeights(settingsJson: unknown) {
+    const raw = (settingsJson as { assessmentWeights?: unknown } | null)?.assessmentWeights;
+    const parsed = AssessmentWeightsSchema.safeParse(raw);
+    if (!parsed.success) {
+      this.logger.warn(
+        `Invalid or missing assessmentWeights in org settings; using defaults. ${parsed.error?.message ?? ''}`,
+      );
+      return DEFAULT_ASSESSMENT_WEIGHTS;
+    }
+    return parsed.data;
+  }
 
   async listForUser(orgId: TenantId, userId: string) {
     return withTenant(orgId, (tx) =>
@@ -82,9 +97,7 @@ export class AssessmentService {
       if (!['self_submitted', 'manager_in_progress', 'ai_analyzed'].includes(a.status))
         throw new BadRequestException(`Cannot score in status: ${a.status}`);
 
-      // Compute composite from all available component scores
-      const weights = (a.cycle.org.settingsJson as { assessmentWeights?: unknown })
-        .assessmentWeights as { self: number; manager: number; peer: number; ai: number };
+      const weights = this.resolveWeights(a.cycle.org.settingsJson);
       const composite = this.scoring.computeComposite(
         {
           self: a.selfScore,
@@ -92,7 +105,7 @@ export class AssessmentService {
           peer: a.peerScore,
           ai: a.aiScore,
         },
-        weights ?? { self: 0.15, manager: 0.5, peer: 0.2, ai: 0.15 },
+        weights,
       );
 
       return tx.assessment.update({

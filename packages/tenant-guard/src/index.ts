@@ -12,7 +12,7 @@
  * This is defense-in-depth on top of application-level `where: { orgId }` filters.
  * See ADR-002 and memory/feedback_multi_tenant_rules.md.
  */
-import { prisma, PrismaClient, Prisma } from '@skillforge/db';
+import { prisma, prismaAdmin, PrismaClient, Prisma } from '@skillforge/db';
 
 /**
  * Branded type — you cannot construct a TenantId without going through
@@ -69,30 +69,24 @@ export async function withTenant<T>(
 }
 
 /**
- * Escape hatch for super-admin cross-tenant operations.
- * MUST be called with an audit log row recorded separately.
+ * Escape hatch for super-admin cross-tenant operations. Uses `prismaAdmin`
+ * (BYPASSRLS) for both the audit write AND the operation callback.
  *
- * This does NOT bypass RLS — it runs queries outside a tenant context,
- * which means RLS policies will return 0 rows unless the DB role has
- * BYPASSRLS (which we only grant to `skillforge_admin`, not `skillforge`).
+ * Fails closed: if the audit insert fails, the operation does NOT run.
  *
- * For truly cross-tenant queries (e.g., bias detection cron), use the
- * admin role by instantiating a PrismaClient with the `DATABASE_URL_ADMIN`
- * env var.
+ * Only call this from code paths that are:
+ *   - behind a `@Roles('super_admin')` controller guard, AND
+ *   - marked `@AllowCrossTenant()`, AND
+ *   - you have a written reason that ends up in the audit `rationale`.
  */
 export async function withoutTenant<T>(
   fn: (tx: TenantScopedClient) => Promise<T>,
   audit: { actorId: string; reason: string; route?: string },
-  opts?: { client?: PrismaClient },
 ): Promise<T> {
-  const client = opts?.client ?? prisma;
-
-  // Emit an audit log row BEFORE the operation. If the audit insert fails,
-  // we do not run the operation — fail closed.
-  await client.auditLog.create({
+  // Audit row uses a sentinel orgId since the op spans tenants. Written
+  // BEFORE the op so a crash doesn't leave an unlogged cross-tenant read.
+  await prismaAdmin.auditLog.create({
     data: {
-      // orgId is required on audit_log — use a sentinel UUID for cross-tenant ops.
-      // The app treats this as "no tenant" and the RLS policy allows it for admin roles.
       orgId: '00000000-0000-0000-0000-000000000000',
       actorId: audit.actorId,
       action: 'cross_tenant_access',
@@ -101,7 +95,7 @@ export async function withoutTenant<T>(
     },
   });
 
-  return client.$transaction(async (tx) => fn(tx));
+  return prismaAdmin.$transaction(async (tx) => fn(tx));
 }
 
 /**

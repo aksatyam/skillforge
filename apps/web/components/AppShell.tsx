@@ -2,7 +2,8 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import type { UserRole } from '@skillforge/shared-types';
 import { clearSession, getAccessToken } from '@/lib/session';
 import { useMe } from '@/hooks/use-me';
@@ -39,12 +40,35 @@ const NAV: NavItem[] = [
 export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
+  const qc = useQueryClient();
+  const [hasToken, setHasToken] = useState<boolean | null>(null);
 
+  // First pass: gate on token presence. If no token, clear any stale cache
+  // from a previous session and redirect BEFORE useMe() fires its request.
   useEffect(() => {
-    if (!getAccessToken()) router.replace('/login');
-  }, [router]);
+    if (!getAccessToken()) {
+      qc.clear();
+      router.replace('/login');
+      setHasToken(false);
+      return;
+    }
+    setHasToken(true);
+  }, [router, qc]);
 
+  // Only fire /me after the token check passes.
   const me = useMe();
+
+  if (hasToken === null) {
+    return (
+      <div className="flex min-h-screen items-center justify-center text-brand-medium">
+        Loading…
+      </div>
+    );
+  }
+
+  if (hasToken === false) {
+    return null; // redirect in flight
+  }
 
   if (me.isLoading) {
     return (
@@ -62,6 +86,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <button
             onClick={() => {
               clearSession();
+              qc.clear();
               router.replace('/login');
             }}
             className="mt-2 text-sm text-brand-blue hover:underline"
@@ -133,6 +158,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 }
               }
               clearSession();
+              qc.clear();
               router.replace('/login');
             }}
             className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-brand-dark hover:bg-neutral-100"

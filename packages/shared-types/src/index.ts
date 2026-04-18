@@ -183,6 +183,27 @@ export const UpsertRoleMappingDtoSchema = z.object({
 });
 export type UpsertRoleMappingDto = z.infer<typeof UpsertRoleMappingDtoSchema>;
 
+// ── Organization settings (scoring weights, AI config) ─────────
+export const AssessmentWeightsSchema = z
+  .object({
+    self: z.number().min(0).max(1),
+    manager: z.number().min(0).max(1),
+    peer: z.number().min(0).max(1),
+    ai: z.number().min(0).max(1),
+  })
+  .refine(
+    (w) => Math.abs(w.self + w.manager + w.peer + w.ai - 1) < 0.01,
+    { message: 'weights must sum to 1.0 ± 0.01' },
+  );
+export type AssessmentWeights = z.infer<typeof AssessmentWeightsSchema>;
+
+export const DEFAULT_ASSESSMENT_WEIGHTS: AssessmentWeights = {
+  self: 0.15,
+  manager: 0.5,
+  peer: 0.2,
+  ai: 0.15,
+};
+
 // ── Current user (Sprint 1) ────────────────────────────────────
 export const MeResponseSchema = z.object({
   id: z.string().uuid(),

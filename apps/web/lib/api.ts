@@ -11,9 +11,16 @@
  * to the assessment-service. Other services (Phase 2) will add their own
  * rewrite prefixes.
  */
+import type { QueryClient } from '@tanstack/react-query';
 import { clearSession } from '@/lib/session';
 
 const API_PREFIX = '/api/assessment';
+
+// Registered at app mount by `Providers` so 401 handler can flush the cache
+let queryClientRef: QueryClient | null = null;
+export function registerQueryClient(qc: QueryClient) {
+  queryClientRef = qc;
+}
 
 export class ApiError extends Error {
   constructor(
@@ -76,6 +83,7 @@ async function request<T>(
       return request<T>(path, init, true);
     }
     clearSession();
+    queryClientRef?.clear();
     if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
       window.location.href = '/login';
     }
