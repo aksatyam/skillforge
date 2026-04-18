@@ -83,9 +83,15 @@ for db in "$SKILLFORGE_DB" "$SKILLFORGE_SHADOW_DB"; do
   fi
   # Ensure app role can use the DB (RLS will still filter their queries)
   psql -U "$PGUSER_DEFAULT" -d postgres -c "GRANT ALL PRIVILEGES ON DATABASE $db TO $SKILLFORGE_APP_USER;" >/dev/null
-  psql -U "$PGUSER_DEFAULT" -d "$db" -c "GRANT ALL ON SCHEMA public TO $SKILLFORGE_APP_USER;" >/dev/null
-  psql -U "$PGUSER_DEFAULT" -d "$db" -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO $SKILLFORGE_APP_USER;" >/dev/null
-  psql -U "$PGUSER_DEFAULT" -d "$db" -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO $SKILLFORGE_APP_USER;" >/dev/null
+  psql -U "$PGUSER_DEFAULT" -d "$db" -c "GRANT ALL ON SCHEMA public TO $SKILLFORGE_APP_USER, $SKILLFORGE_ADMIN_USER;" >/dev/null
+  # Existing tables (re-runs after migrate)
+  psql -U "$PGUSER_DEFAULT" -d "$db" -c "GRANT ALL ON ALL TABLES IN SCHEMA public TO $SKILLFORGE_APP_USER, $SKILLFORGE_ADMIN_USER;" >/dev/null
+  psql -U "$PGUSER_DEFAULT" -d "$db" -c "GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO $SKILLFORGE_APP_USER, $SKILLFORGE_ADMIN_USER;" >/dev/null
+  # Future tables (new migrations)
+  psql -U "$PGUSER_DEFAULT" -d "$db" -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO $SKILLFORGE_APP_USER, $SKILLFORGE_ADMIN_USER;" >/dev/null
+  psql -U "$PGUSER_DEFAULT" -d "$db" -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO $SKILLFORGE_APP_USER, $SKILLFORGE_ADMIN_USER;" >/dev/null
+  psql -U "$PGUSER_DEFAULT" -d "$db" -c "ALTER DEFAULT PRIVILEGES FOR ROLE $SKILLFORGE_APP_USER IN SCHEMA public GRANT ALL ON TABLES TO $SKILLFORGE_ADMIN_USER;" >/dev/null
+  psql -U "$PGUSER_DEFAULT" -d "$db" -c "ALTER DEFAULT PRIVILEGES FOR ROLE $SKILLFORGE_APP_USER IN SCHEMA public GRANT ALL ON SEQUENCES TO $SKILLFORGE_ADMIN_USER;" >/dev/null
 done
 
 # Ensure pgcrypto extension for gen_random_uuid()
@@ -124,7 +130,7 @@ echo ""
 echo -e "${GREEN}─────────────────────────────────────────────${NC}"
 echo -e "${GREEN}  SkillForge local stack is up${NC}"
 echo -e "${GREEN}─────────────────────────────────────────────${NC}"
-echo "  Postgres : localhost:5432 (db=$SKILLFORGE_DB, user=$SKILLFORGE_USER)"
+echo "  Postgres : localhost:5432 (db=$SKILLFORGE_DB, app=$SKILLFORGE_APP_USER, admin=$SKILLFORGE_ADMIN_USER)"
 echo "  Redis    : localhost:6379"
 echo ""
 echo "  Next steps:"

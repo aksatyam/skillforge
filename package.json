@@ -29,6 +29,7 @@
     "security:audit": "pnpm audit --audit-level=high && pnpm semgrep --config=auto --error --severity=ERROR || true"
   },
   "devDependencies": {
+    "@prisma/client": "^5.22.0",
     "@types/node": "^20.12.7",
     "prettier": "^3.3.3",
     "turbo": "^2.1.3",

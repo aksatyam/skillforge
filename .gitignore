@@ -8,6 +8,10 @@ build/
 .next/
 .turbo/
 *.tsbuildinfo
+packages/*/src/**/*.js
+packages/*/src/**/*.d.ts
+packages/*/src/**/*.d.ts.map
+packages/*/src/**/*.js.map
 
 # Test output
 coverage/

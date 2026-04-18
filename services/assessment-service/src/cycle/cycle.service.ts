@@ -126,21 +126,23 @@ export class CycleService {
   }
 
   async transition(orgId: TenantId, cycleId: string, to: CycleStatus) {
-    // `open` requires materialization — route through activate()
-    if (to === 'open') {
-      return this.activate(orgId, cycleId);
-    }
-
+    // Only `draft → open` goes through activate() (materializes Assessment rows).
+    // `locked → open` (unlock) is a separate, guarded path below.
     return withTenant(orgId, async (tx) => {
       const cycle = await tx.assessmentCycle.findFirst({
         where: { id: cycleId, deletedAt: null },
       });
       if (!cycle) throw new NotFoundException();
+
+      if (to === 'open' && cycle.status === 'draft') {
+        return this.activate(orgId, cycleId);
+      }
+
       if (!TRANSITIONS[cycle.status].includes(to)) {
         throw new BadRequestException(`Invalid transition: ${cycle.status} → ${to}`);
       }
 
-      // Prevent unlock if any assessments are already finalized
+      // Unlock guard: can't reopen a cycle with finalized assessments
       if (cycle.status === 'locked' && to === 'open') {
         const finalized = await tx.assessment.count({
           where: { cycleId, status: 'finalized' },
