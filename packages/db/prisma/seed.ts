@@ -48,6 +48,7 @@ async function main() {
       domain: 'qualtech.com',
       subscriptionPlan: 'internal',
       settingsJson: {
+        timezone: 'Asia/Kolkata',
         assessmentWeights: {
           self: 0.15,
           manager: 0.5,

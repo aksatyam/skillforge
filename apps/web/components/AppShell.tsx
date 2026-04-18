@@ -2,10 +2,9 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { UserRole } from '@skillforge/shared-types';
-import { clearSession, getAccessToken } from '@/lib/session';
+import { clearSession, useHasSession } from '@/lib/session';
 import { useMe } from '@/hooks/use-me';
 import {
   LogOut,
@@ -17,7 +16,9 @@ import {
   BarChart3,
   BarChart2,
   TrendingUp,
+  Bell,
 } from 'lucide-react';
+import { useEffect } from 'react';
 
 type NavItem = {
   href: string;
@@ -52,30 +53,32 @@ const NAV: NavItem[] = [
   { href: '/cycles', label: 'Cycles', icon: <Settings2 size={18} />, roles: ['hr_admin'] },
   { href: '/hr/reports', label: 'Reports', icon: <BarChart2 size={18} />, roles: ['hr_admin'] },
   { href: '/hr', label: 'HR Dashboard', icon: <BarChart3 size={18} />, roles: ['hr_admin'] },
+  { href: '/settings/notifications', label: 'Notification settings', icon: <Bell size={18} /> },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const qc = useQueryClient();
-  const [hasToken, setHasToken] = useState<boolean | null>(null);
 
-  // First pass: gate on token presence. If no token, clear any stale cache
-  // from a previous session and redirect BEFORE useMe() fires its request.
+  // First pass: probe /api/session/me. The access token is httpOnly so we
+  // can no longer check for its presence synchronously — we ask the server.
+  // While the probe is in flight, render a spinner. If it comes back false,
+  // redirect to /login before `useMe()` fires its request.
+  const signedIn = useHasSession();
+
   useEffect(() => {
-    if (!getAccessToken()) {
+    if (signedIn === false) {
       qc.clear();
       router.replace('/login');
-      setHasToken(false);
-      return;
     }
-    setHasToken(true);
-  }, [router, qc]);
+  }, [signedIn, qc, router]);
 
-  // Only fire /me after the token check passes.
+  // `useMe()` is always called (hooks rules), but it's disabled until the
+  // session probe succeeds so we don't fire a useless request pre-redirect.
   const me = useMe();
 
-  if (hasToken === null) {
+  if (signedIn === null) {
     return (
       <div className="flex min-h-screen items-center justify-center text-brand-medium">
         Loading…
@@ -83,7 +86,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     );
   }
 
-  if (hasToken === false) {
+  if (signedIn === false) {
     return null; // redirect in flight
   }
 
@@ -101,8 +104,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <div className="text-center">
           <p className="text-brand-medium">Session expired.</p>
           <button
-            onClick={() => {
-              clearSession();
+            onClick={async () => {
+              await clearSession();
               qc.clear();
               router.replace('/login');
             }}
@@ -171,19 +174,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
           <button
             onClick={async () => {
-              const refreshToken = sessionStorage.getItem('sf:refresh');
-              if (refreshToken) {
-                try {
-                  await fetch('/api/assessment/auth/logout', {
-                    method: 'POST',
-                    headers: { 'content-type': 'application/json' },
-                    body: JSON.stringify({ refreshToken }),
-                  });
-                } catch {
-                  /* ignore */
-                }
-              }
-              clearSession();
+              // clearSession() POSTs /api/session/logout which revokes the
+              // refresh token upstream and clears both cookies.
+              await clearSession();
               qc.clear();
               router.replace('/login');
             }}

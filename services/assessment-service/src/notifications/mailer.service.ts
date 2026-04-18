@@ -61,8 +61,11 @@ export class MailerService {
   }
 
   private sendConsole(msg: MailMessage): { ok: true } {
+    const htmlPreview = msg.html
+      ? `\n[html-preview] ${msg.html.replace(/\s+/g, ' ').slice(0, 200)}${msg.html.length > 200 ? '…' : ''}`
+      : '';
     this.logger.log(
-      `[console-mail] to=${msg.to} subject="${msg.subject}"\n${msg.text}`,
+      `[console-mail] to=${msg.to} subject="${msg.subject}"\n${msg.text}${htmlPreview}`,
     );
     return { ok: true };
   }

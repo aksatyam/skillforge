@@ -251,3 +251,27 @@ export const RequestUploadUrlDtoSchema = z.object({
   artifactType: ArtifactTypeSchema,
 });
 export type RequestUploadUrlDto = z.infer<typeof RequestUploadUrlDtoSchema>;
+
+// ── Notification preferences (Sprint 5) ────────────────────────
+export const DigestFrequencySchema = z.enum(['daily', 'weekly', 'off']);
+export type DigestFrequency = z.infer<typeof DigestFrequencySchema>;
+
+export const NotificationPrefsSchema = z.object({
+  reminders: z.object({
+    enabled: z.boolean(),
+    digestFrequency: DigestFrequencySchema,
+  }),
+  assignment: z.object({ enabled: z.boolean() }),
+  managerReview: z.object({ enabled: z.boolean() }),
+});
+export type NotificationPrefs = z.infer<typeof NotificationPrefsSchema>;
+
+// Partial PATCH body — every field is optional, deep-merged server-side.
+export const UpdateNotificationPrefsDtoSchema = NotificationPrefsSchema.deepPartial();
+export type UpdateNotificationPrefsDto = z.infer<typeof UpdateNotificationPrefsDtoSchema>;
+
+export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
+  reminders: { enabled: true, digestFrequency: 'daily' },
+  assignment: { enabled: true },
+  managerReview: { enabled: true },
+};

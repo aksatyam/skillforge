@@ -19,19 +19,21 @@ export default function LoginPage() {
   async function onSubmit(data: LoginDto) {
     setServerError(null);
     try {
-      const res = await fetch('/api/assessment/auth/login', {
+      // BFF login: the Route Handler sets httpOnly cookies. The response
+      // body is just `{ ok: true }` — tokens never touch JS.
+      const res = await fetch('/api/session/login', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(data),
+        credentials: 'same-origin',
       });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.message ?? 'Login failed');
+      const body = (await res.json().catch(() => ({}))) as
+        | { ok: true }
+        | { ok: false; error?: string };
+      if (!res.ok || !('ok' in body) || body.ok !== true) {
+        const msg = 'error' in body && body.error ? body.error : 'Login failed';
+        throw new Error(msg);
       }
-      const tokens = await res.json();
-      // TODO: move to httpOnly cookie via Next.js route handler; this is dev-only.
-      sessionStorage.setItem('sf:access', tokens.accessToken);
-      sessionStorage.setItem('sf:refresh', tokens.refreshToken);
       router.push('/dashboard');
     } catch (err) {
       setServerError(err instanceof Error ? err.message : 'Login failed');

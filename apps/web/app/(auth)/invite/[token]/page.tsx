@@ -5,8 +5,6 @@ import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { AcceptInviteDtoSchema, type AcceptInviteDto } from '@skillforge/shared-types';
-import { api } from '@/lib/api';
-import type { AuthTokens } from '@skillforge/shared-types';
 
 export default function AcceptInvitePage() {
   const { token } = useParams<{ token: string }>();
@@ -25,9 +23,20 @@ export default function AcceptInvitePage() {
   async function onSubmit(dto: AcceptInviteDto) {
     setServerError(null);
     try {
-      const tokens = await api.post<AuthTokens>('/auth/accept-invite', dto);
-      sessionStorage.setItem('sf:access', tokens.accessToken);
-      sessionStorage.setItem('sf:refresh', tokens.refreshToken);
+      // BFF accept-invite: Route Handler sets httpOnly cookies on success.
+      const res = await fetch('/api/session/accept-invite', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(dto),
+        credentials: 'same-origin',
+      });
+      const body = (await res.json().catch(() => ({}))) as
+        | { ok: true }
+        | { ok: false; error?: string };
+      if (!res.ok || !('ok' in body) || body.ok !== true) {
+        const msg = 'error' in body && body.error ? body.error : 'Failed';
+        throw new Error(msg);
+      }
       router.push('/dashboard');
     } catch (err) {
       setServerError(err instanceof Error ? err.message : 'Failed');

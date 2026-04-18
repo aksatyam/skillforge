@@ -204,20 +204,18 @@ export function useBulkFinalize() {
 }
 
 /**
- * CSV export helper. Uses fetch() + blob() so the bearer token stays in
- * an Authorization header (not a URL param), and derives the filename
- * from the server's Content-Disposition.
+ * CSV export helper. Uses fetch() + blob() to a streamed response.
+ * Auth is handled by the `/api/assessment/*` Route Handler, which reads
+ * the httpOnly `sf_access` cookie and forwards it as Bearer upstream.
+ * We just rely on the browser sending same-origin cookies by default.
+ * The filename is derived from the server's Content-Disposition.
  */
 export function useDownloadExport() {
   return async (cycleId: string, fileLabel?: string) => {
     if (typeof window === 'undefined') return;
-    const access = sessionStorage.getItem('sf:access') ?? '';
     const res = await fetch(
       `/api/assessment/cycles/${encodeURIComponent(cycleId)}/export.csv`,
-      {
-        method: 'GET',
-        headers: access ? { authorization: `Bearer ${access}` } : undefined,
-      },
+      { method: 'GET', credentials: 'same-origin' },
     );
     if (!res.ok) {
       const text = await res.text().catch(() => '');

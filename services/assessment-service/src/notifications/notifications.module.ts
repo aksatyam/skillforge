@@ -2,19 +2,29 @@ import { Module, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
 import { MailerService } from './mailer.service';
 import { ReminderWorker } from './reminder.worker';
 import { ReminderScheduler } from './reminder.scheduler';
+import { NotificationPreferencesController } from './preferences.controller';
+import { NotificationPreferencesService } from './preferences.service';
 
 /**
- * NotificationsModule — Sprint 2 feature #12 (email reminders).
+ * NotificationsModule — Sprint 2 feature #12 (email reminders) +
+ * Sprint 5 feature #1 (HTML templates + per-user preferences).
  *
- * Wires MailerService + ReminderWorker + ReminderScheduler.
+ * Wires MailerService + ReminderWorker + ReminderScheduler +
+ * NotificationPreferencesService (controller) so users can opt out.
  *
  * Graceful degradation: if Redis is unreachable the scheduler logs a warning
  * and skips registration; the HTTP service still starts. BullMQ itself will
  * surface connection errors via its own logger.
  */
 @Module({
-  providers: [MailerService, ReminderWorker, ReminderScheduler],
-  exports: [MailerService],
+  controllers: [NotificationPreferencesController],
+  providers: [
+    MailerService,
+    ReminderWorker,
+    ReminderScheduler,
+    NotificationPreferencesService,
+  ],
+  exports: [MailerService, NotificationPreferencesService],
 })
 export class NotificationsModule implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger('NotificationsModule');

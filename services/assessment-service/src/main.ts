@@ -25,10 +25,9 @@ async function bootstrap() {
     }),
   );
 
-  // Swagger — disabled under tsx dev (esbuild doesn't emit the same
-  // decorator metadata as tsc, which @nestjs/swagger requires).
-  // Re-enable in prod builds where `nest build` uses tsc.
-  if (process.env.ENABLE_SWAGGER === 'true') {
+  // Swagger — on by default under ts-node-dev (which emits decorator
+  // metadata correctly). Opt out with DISABLE_SWAGGER=true if needed.
+  if (process.env.DISABLE_SWAGGER !== 'true') {
     const config = new DocumentBuilder()
       .setTitle('SkillForge Assessment Service')
       .setDescription('Assessment lifecycle, scoring, artifacts')
@@ -39,7 +38,12 @@ async function bootstrap() {
   }
 
   await app.listen(port);
-  Logger.log(`🚀 assessment-service on http://localhost:${port}`, 'Bootstrap');
+  Logger.log(
+    `🚀 assessment-service on http://localhost:${port}${
+      process.env.DISABLE_SWAGGER !== 'true' ? ' (docs: /api/docs)' : ''
+    }`,
+    'Bootstrap',
+  );
 }
 
 void bootstrap();

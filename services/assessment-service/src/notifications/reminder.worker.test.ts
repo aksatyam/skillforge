@@ -84,7 +84,16 @@ describe('ReminderWorker.runDigest', () => {
       {
         id: 'assessment-1',
         userId: 'user-1',
-        user: { id: 'user-1', email: 'alice@example.com', name: 'Alice' },
+        user: {
+          id: 'user-1',
+          email: 'alice@example.com',
+          name: 'Alice',
+          notificationPrefsJson: {
+            reminders: { enabled: true, digestFrequency: 'daily' },
+            assignment: { enabled: true },
+            managerReview: { enabled: true },
+          },
+        },
       },
     ]);
 
@@ -114,7 +123,20 @@ describe('ReminderWorker.runDigest', () => {
       { id: 'c', orgId: 'o', name: 'C', endDate: new Date('2026-04-21T00:00:00Z') },
     ]);
     dbMocks.assessmentFindMany.mockResolvedValue([
-      { id: 'a', userId: 'u', user: { id: 'u', email: 'a@b.c', name: 'A' } },
+      {
+        id: 'a',
+        userId: 'u',
+        user: {
+          id: 'u',
+          email: 'a@b.c',
+          name: 'A',
+          notificationPrefsJson: {
+            reminders: { enabled: true, digestFrequency: 'daily' },
+            assignment: { enabled: true },
+            managerReview: { enabled: true },
+          },
+        },
+      },
     ]);
 
     const sendSpy = vi.fn().mockResolvedValue({ ok: true });
@@ -136,7 +158,20 @@ describe('ReminderWorker.runDigest', () => {
       { id: 'c', orgId: 'o', name: 'C', endDate: new Date('2026-04-21T00:00:00Z') },
     ]);
     dbMocks.assessmentFindMany.mockResolvedValue([
-      { id: 'a', userId: 'u', user: { id: 'u', email: 'a@b.c', name: 'A' } },
+      {
+        id: 'a',
+        userId: 'u',
+        user: {
+          id: 'u',
+          email: 'a@b.c',
+          name: 'A',
+          notificationPrefsJson: {
+            reminders: { enabled: true, digestFrequency: 'daily' },
+            assignment: { enabled: true },
+            managerReview: { enabled: true },
+          },
+        },
+      },
     ]);
 
     const sendSpy = vi

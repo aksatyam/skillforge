@@ -1,24 +1,25 @@
 /**
  * Typed API client for the SkillForge web app.
  *
- * Responsibilities:
- *   - Attach bearer token to every request
- *   - On 401, attempt a single silent refresh; retry once
- *   - Normalize error responses
- *   - Parse JSON defensively
+ * Auth model: JWTs live in httpOnly cookies set by our Next.js origin
+ * (see `app/api/session/*`). The `/api/assessment/*` catch-all Route
+ * Handler reads the cookie and forwards it as `Authorization: Bearer`
+ * before proxying upstream. It also handles silent refresh on 401.
  *
- * All routes go through `/api/assessment/*` → rewritten by next.config.mjs
- * to the assessment-service. Other services (Phase 2) will add their own
- * rewrite prefixes.
+ * This client therefore no longer:
+ *   - reads `sessionStorage` for a token
+ *   - attaches an Authorization header
+ *   - attempts refresh itself
+ *
+ * On 401 we clear the React Query cache and redirect to /login.
  */
 import type { QueryClient } from '@tanstack/react-query';
-import { clearSession } from '@/lib/session';
 
 const API_PREFIX = '/api/assessment';
 
-// Registered at app mount by `Providers` so 401 handler can flush the cache
+// Registered at app mount by `Providers` so the 401 handler can flush cache.
 let queryClientRef: QueryClient | null = null;
-export function registerQueryClient(qc: QueryClient) {
+export function registerQueryClient(qc: QueryClient): void {
   queryClientRef = qc;
 }
 
@@ -36,53 +37,19 @@ export class ApiError extends Error {
 
 type Json = Record<string, unknown> | unknown[] | string | number | boolean | null;
 
-function getAccess(): string | null {
-  return typeof window === 'undefined' ? null : sessionStorage.getItem('sf:access');
-}
-
-function setTokens(access: string, refresh: string) {
-  sessionStorage.setItem('sf:access', access);
-  sessionStorage.setItem('sf:refresh', refresh);
-}
-
-async function refreshSilently(): Promise<boolean> {
-  const refresh = sessionStorage.getItem('sf:refresh');
-  if (!refresh) return false;
-  try {
-    const res = await fetch(`${API_PREFIX}/auth/refresh`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ refreshToken: refresh }),
-    });
-    if (!res.ok) return false;
-    const tokens = await res.json();
-    setTokens(tokens.accessToken, tokens.refreshToken);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function request<T>(
-  path: string,
-  init: RequestInit = {},
-  _retried = false,
-): Promise<T> {
-  const access = getAccess();
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set('accept', 'application/json');
   if (init.body && !headers.has('content-type')) {
     headers.set('content-type', 'application/json');
   }
-  if (access) headers.set('authorization', `Bearer ${access}`);
 
+  // `credentials: 'same-origin'` (the default) sends our BFF cookies,
+  // but the proxy doesn't need them — it reads `sf_access` server-side.
+  // We keep the default so the browser and proxy agree on cookie handling.
   const res = await fetch(`${API_PREFIX}${path}`, { ...init, headers });
 
-  if (res.status === 401 && !_retried) {
-    if (await refreshSilently()) {
-      return request<T>(path, init, true);
-    }
-    clearSession();
+  if (res.status === 401) {
     queryClientRef?.clear();
     if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
       window.location.href = '/login';
@@ -90,7 +57,6 @@ async function request<T>(
     throw new ApiError('Not authenticated', 401);
   }
 
-  // 204 No Content
   if (res.status === 204) return undefined as T;
 
   let body: Json = null;
@@ -99,7 +65,7 @@ async function request<T>(
     try {
       body = JSON.parse(text);
     } catch {
-      /* leave as text */
+      /* leave as null — caller may not care */
     }
   }
 

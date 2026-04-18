@@ -2,7 +2,13 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Worker, type Job } from 'bullmq';
 import IORedis, { type Redis } from 'ioredis';
 import { prismaAdmin } from '@skillforge/db';
+import {
+  NotificationPrefsSchema,
+  DEFAULT_NOTIFICATION_PREFS,
+  type NotificationPrefs,
+} from '@skillforge/shared-types';
 import { MailerService } from './mailer.service';
+import { renderReminderEmail } from './templates/reminder';
 
 /**
  * ReminderWorker — BullMQ worker for the Sprint 2 daily-digest feature.
@@ -17,6 +23,10 @@ import { MailerService } from './mailer.service';
  *
  * Idempotency: Redis SET NX EX 86400, key `reminder:sent:{userId}:{YYYYMMDD}`.
  * Rationale in docs/design/reminder-idempotency.md.
+ *
+ * Sprint 5: per-user `notificationPrefsJson.reminders.enabled` gates sending.
+ * Opted-out users are counted as `skipped` (not `failed`) and no audit is
+ * written — the pref itself is the audit trail.
  */
 
 export const REMINDER_QUEUE = 'reminder-digest';
@@ -34,6 +44,12 @@ export interface RunSummary {
   sends: number;
   skipped: number;
   failed: number;
+}
+
+/** Coerce untyped JSON to a valid NotificationPrefs; fall back to defaults. */
+function readPrefs(raw: unknown): NotificationPrefs {
+  const parsed = NotificationPrefsSchema.safeParse(raw);
+  return parsed.success ? parsed.data : DEFAULT_NOTIFICATION_PREFS;
 }
 
 @Injectable()
@@ -99,6 +115,8 @@ export class ReminderWorker {
     let failed = 0;
 
     for (const cycle of atRiskCycles) {
+      // Sprint 5: load prefs alongside the assessment fetch so we can honor
+      // opt-out without a second round-trip per employee.
       const pending = await prismaAdmin.assessment.findMany({
         where: {
           cycleId: cycle.id,
@@ -109,11 +127,25 @@ export class ReminderWorker {
         select: {
           id: true,
           userId: true,
-          user: { select: { id: true, email: true, name: true } },
+          user: {
+            select: {
+              id: true,
+              email: true,
+              name: true,
+              notificationPrefsJson: true,
+            },
+          },
         },
       });
 
       for (const a of pending) {
+        const prefs = readPrefs(a.user.notificationPrefsJson);
+        if (!prefs.reminders.enabled) {
+          this.logger.debug(`skip ${a.user.email} — skipped=user_opted_out`);
+          skipped += 1;
+          continue;
+        }
+
         const result = await this.sendOne({
           orgId: cycle.orgId,
           cycleName: cycle.name,
@@ -143,9 +175,10 @@ export class ReminderWorker {
     email: string;
     name: string;
     now: Date;
+    tenantTimezone: string;
   }): Promise<'sent' | 'skipped' | 'failed'> {
-    const { orgId, cycleName, cycleEndDate, userId, email, name, now } = args;
-    const key = `${IDEMPOTENCY_KEY_PREFIX}:${userId}:${ymd(now)}`;
+    const { orgId, cycleName, cycleEndDate, userId, email, name, now, tenantTimezone } = args;
+    const key = `${IDEMPOTENCY_KEY_PREFIX}:${userId}:${ymd(now, tenantTimezone)}`;
 
     if (this.redis) {
       const claimed = await this.redis.set(key, '1', 'EX', IDEMPOTENCY_TTL_SEC, 'NX');
@@ -159,15 +192,22 @@ export class ReminderWorker {
       0,
       Math.ceil((cycleEndDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)),
     );
+    const appBaseUrl = process.env.APP_BASE_URL ?? 'https://app.skillforge.local';
+    const assessmentUrl = `${appBaseUrl}/assessments`;
+
+    const rendered = renderReminderEmail({
+      employeeName: name,
+      cycleName,
+      daysLeft,
+      cycleEndDate,
+      assessmentUrl,
+    });
+
     const mailResult = await this.mailer.send({
       to: email,
-      subject: `Reminder: your self-assessment for ${cycleName} is due in ${daysLeft} day(s)`,
-      text:
-        `Hi ${name},\n\n` +
-        `Your self-assessment for the "${cycleName}" cycle is still not started. ` +
-        `The cycle closes on ${cycleEndDate.toISOString().slice(0, 10)} ` +
-        `(${daysLeft} day${daysLeft === 1 ? '' : 's'} away).\n\n` +
-        `Please log in to SkillForge to complete it.\n\n— SkillForge`,
+      subject: rendered.subject,
+      text: rendered.text,
+      html: rendered.html,
     });
 
     if (!mailResult.ok) {
@@ -210,9 +250,35 @@ function addDays(d: Date, days: number): Date {
   return out;
 }
 
-function ymd(d: Date): string {
-  const y = d.getUTCFullYear();
-  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(d.getUTCDate()).padStart(2, '0');
+/**
+ * Date bucket for idempotency. Per-tenant timezone means a cycle in
+ * Asia/Kolkata gets ONE reminder per local day, even if the UTC
+ * worker fires across a midnight boundary. Sprint 5 fix.
+ */
+function ymd(d: Date, timeZone = 'UTC'): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(d);
+  const y = parts.find((p) => p.type === 'year')?.value ?? '0000';
+  const m = parts.find((p) => p.type === 'month')?.value ?? '00';
+  const day = parts.find((p) => p.type === 'day')?.value ?? '00';
   return `${y}${m}${day}`;
+}
+
+/**
+ * Read the tenant's IANA timezone from organization.settings_json.timezone.
+ * Falls back to UTC if missing or invalid (invalid tz strings throw from Intl).
+ */
+export function resolveTimezone(settingsJson: unknown): string {
+  const raw = (settingsJson as { timezone?: unknown } | null)?.timezone;
+  if (typeof raw !== 'string' || raw.length === 0) return 'UTC';
+  try {
+    new Intl.DateTimeFormat('en-CA', { timeZone: raw });
+    return raw;
+  } catch {
+    return 'UTC';
+  }
 }

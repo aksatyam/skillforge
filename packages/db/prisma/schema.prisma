@@ -117,6 +117,7 @@ model User {
   inviteAcceptedAt   DateTime? @map("invite_accepted_at") @db.Timestamptz(6)
   mfaEnabled         Boolean   @default(false) @map("mfa_enabled")
   lastLoginAt        DateTime? @map("last_login_at") @db.Timestamptz(6)
+  notificationPrefsJson Json   @default("{\"reminders\":{\"enabled\":true,\"digestFrequency\":\"daily\"},\"assignment\":{\"enabled\":true},\"managerReview\":{\"enabled\":true}}") @map("notification_prefs_json")
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdById        String?   @map("created_by") @db.Uuid
