@@ -203,21 +203,39 @@ export function useBulkFinalize() {
   });
 }
 
-/** CSV export helper — anchor-click download with bearer token query param. */
+/**
+ * CSV export helper. Uses fetch() + blob() so the bearer token stays in
+ * an Authorization header (not a URL param), and derives the filename
+ * from the server's Content-Disposition.
+ */
 export function useDownloadExport() {
-  return (cycleId: string, fileLabel?: string) => {
+  return async (cycleId: string, fileLabel?: string) => {
     if (typeof window === 'undefined') return;
     const access = sessionStorage.getItem('sf:access') ?? '';
-    const url =
-      `/api/assessment/cycles/${encodeURIComponent(cycleId)}/export.csv` +
-      (access ? `?access_token=${encodeURIComponent(access)}` : '');
+    const res = await fetch(
+      `/api/assessment/cycles/${encodeURIComponent(cycleId)}/export.csv`,
+      {
+        method: 'GET',
+        headers: access ? { authorization: `Bearer ${access}` } : undefined,
+      },
+    );
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(text || `Export failed (${res.status})`);
+    }
+    const disposition = res.headers.get('content-disposition') ?? '';
+    const match = /filename="?([^"]+)"?/.exec(disposition);
+    const filename = match?.[1] ?? `cycle-${fileLabel ?? cycleId}-export.csv`;
 
+    const blob = await res.blob();
+    const blobUrl = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url;
-    a.download = `cycle-${fileLabel ?? cycleId}-export.csv`;
+    a.href = blobUrl;
+    a.download = filename;
     a.rel = 'noopener';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+    URL.revokeObjectURL(blobUrl);
   };
 }
