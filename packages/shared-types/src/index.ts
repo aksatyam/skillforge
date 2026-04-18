@@ -58,17 +58,31 @@ export type JwtClaims = z.infer<typeof JwtClaimsSchema>;
 // ── Assessment ─────────────────────────────────────────────────
 export const ScoreSchema = z.number().min(0).max(5).multipleOf(0.01);
 
+export const AssessmentResponseSchema = z.object({
+  dimension: z.string().min(1).max(60),
+  score: ScoreSchema,
+  comment: z.string().max(2000).optional(),
+});
+export type AssessmentResponse = z.infer<typeof AssessmentResponseSchema>;
+
+export const SaveSelfDraftDtoSchema = z.object({
+  assessmentId: z.string().uuid(),
+  responses: z.array(AssessmentResponseSchema).max(20),
+});
+export type SaveSelfDraftDto = z.infer<typeof SaveSelfDraftDtoSchema>;
+
 export const SubmitSelfAssessmentDtoSchema = z.object({
   assessmentId: z.string().uuid(),
-  responses: z.array(
-    z.object({
-      dimension: z.string(),
-      score: ScoreSchema,
-      comment: z.string().optional(),
-    }),
-  ),
+  responses: z.array(AssessmentResponseSchema).min(1).max(20),
 });
 export type SubmitSelfAssessmentDto = z.infer<typeof SubmitSelfAssessmentDtoSchema>;
+
+export const AssessmentSubmissionJsonSchema = z.object({
+  responses: z.array(AssessmentResponseSchema),
+  savedAt: z.string().datetime(),
+  submittedAt: z.string().datetime().optional(),
+});
+export type AssessmentSubmissionJson = z.infer<typeof AssessmentSubmissionJsonSchema>;
 
 export const SubmitManagerAssessmentDtoSchema = z.object({
   assessmentId: z.string().uuid(),

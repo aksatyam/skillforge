@@ -16,6 +16,7 @@ import { FrameworkModule } from './framework/framework.module';
 import { CycleModule } from './cycle/cycle.module';
 import { AssessmentModule } from './assessment/assessment.module';
 import { ArtifactModule } from './artifact/artifact.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
   imports: [
@@ -35,6 +36,7 @@ import { ArtifactModule } from './artifact/artifact.module';
     CycleModule,
     AssessmentModule,
     ArtifactModule,
+    NotificationsModule,
   ],
   providers: [
     // Guard chain (order matters):

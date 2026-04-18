@@ -221,6 +221,8 @@ model Assessment {
   aiConfidence     Int?             @map("ai_confidence") // 0-100 per ADR-006
   compositeScore   Decimal?         @map("composite_score") @db.Decimal(5, 2)
   status           AssessmentStatus @default(not_started)
+  // Per-dimension responses. Shape: { self?: {responses, savedAt, submittedAt}, manager?: {responses, savedAt, submittedAt} }
+  responsesJson    Json?            @map("responses_json")
   managerRationale String?          @map("manager_rationale") @db.Text
   createdAt        DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)

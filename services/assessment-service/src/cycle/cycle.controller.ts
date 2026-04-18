@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { CreateCycleDtoSchema, CycleStatusSchema } from '@skillforge/shared-types';
 import { z } from 'zod';
@@ -21,6 +29,19 @@ export class CycleController {
   @Get()
   list(@CurrentTenant() orgId: TenantId) {
     return this.cycles.list(orgId);
+  }
+
+  @Get(':id')
+  get(@CurrentTenant() orgId: TenantId, @Param('id', ParseUUIDPipe) id: string) {
+    return this.cycles.get(orgId, id);
+  }
+
+  @Get(':id/progress')
+  progress(
+    @CurrentTenant() orgId: TenantId,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.cycles.getProgress(orgId, id);
   }
 
   @Roles('hr_admin')
