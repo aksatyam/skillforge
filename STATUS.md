@@ -6,31 +6,46 @@
 
 - ✅ **Sprint 0**: monorepo scaffold, CI/CD, local-dev scripts, 10 ADRs
 - ✅ **Sprint 1 P0**: auth + RBAC, competency framework engine, user invite flow, HR admin UI, baseline + RLS migrations
-- ✅ **Post-Sprint-1 hardening** (commit `99bc173`): prismaAdmin client, transactional auth flows, frontend route guard, cache clear, role gates, zod-validated weights, BYPASSRLS admin role
-- ✅ **Memory + skills synced** (commit `2c2b2aa`): project_sprint_progress, reference_admin_client_pattern, feedback_transaction_scope, sf-tenant-check patterns 6+7
-- ✅ **Sprint 2 P0** (this commit): cycle state machine + `activate()`, self-assessment backend with draft save + submit, artifact upload with HMAC token, self-assessment multi-step UI, ArtifactUploader component, manager roster page, BullMQ reminder subsystem (worker + scheduler + mailer)
+- ✅ **Post-Sprint-1 hardening**: prismaAdmin client, transactional auth flows, frontend route guard, cache clear, role gates, zod-validated weights, BYPASSRLS admin role
+- ✅ **Sprint 2 P0**: cycle state machine + activate, self-assessment backend with draft save + submit, artifact upload with HMAC token, self-assessment multi-step UI, ArtifactUploader, manager roster page, BullMQ reminder subsystem
+- ✅ **Sprint 3 P0 — Hyper-MVP close**:
+  - Manager scoring UI (rubric-weighted average + composite preview + rationale gate)
+  - CSV export (RFC 4180 + BOM + deterministic column order)
+  - Cycle lock + bulk finalize + close with audit trail
+  - HR admin dashboard (KPI strip, cycle cards with donut progress, roster table)
+  - CompletionDonut component
+  - Deployment runbook + UAT checklist with 7 scenarios + sign-off template
 - ✅ **DOCX plans** moved to `docs/plans/`
-- ✅ **Tests**: ~33 new unit assertions across cycle, assessment, artifact, reminder services
+- ✅ **Tests**: ~65 total unit assertions
 
-## Sprint 2 — delivered features
+## Ready for production cutover
 
-| # | Feature | Files |
+| Activity | Date | Status |
 |---|---|---|
-| 7 | Cycle lifecycle + activate/progress | `services/assessment-service/src/cycle/cycle.service.ts`, `cycle.service.test.ts` |
-| 8 | Self-assessment backend | `assessment.service.ts:saveSelfDraft/submitSelf`, `assessment.service.test.ts` |
-| 9 | Artifact upload | `artifact.service.ts` + public PUT controller route, `artifact.service.test.ts` |
-| 10 | Self-assessment UI + auto-save | `apps/web/app/(app)/assessments/[id]/page.tsx`, `ArtifactUploader.tsx`, `use-assessments.ts` |
-| 11 | Manager roster | `apps/web/app/(app)/team/page.tsx` |
-| 12 | Email reminder (BullMQ) | `services/assessment-service/src/notifications/{module,mailer,worker,scheduler}.ts`, `reminder.worker.test.ts`, `docs/design/reminder-idempotency.md` |
+| UAT with 20 pilot users | 2026-05-18 → 2026-05-27 | Pending — start Monday of Sprint 3 |
+| UAT sign-off | 2026-05-28 EOD | Pending |
+| Production deploy | 2026-05-29 Fri EOD | Pending |
+| Qualtech cycle go-live | 2026-06-01 Mon 09:00 IST | Pending |
+| 72h post-launch monitoring | 2026-06-01 → 2026-06-04 | Pending |
 
-## Next
+See:
+- [docs/SPRINT_1_DEMO.md](docs/SPRINT_1_DEMO.md)
+- [docs/SPRINT_2_DEMO.md](docs/SPRINT_2_DEMO.md)
+- [docs/SPRINT_3_DEMO.md](docs/SPRINT_3_DEMO.md)
+- [docs/ops/DEPLOYMENT_RUNBOOK.md](docs/ops/DEPLOYMENT_RUNBOOK.md)
+- [docs/ops/UAT_CHECKLIST.md](docs/ops/UAT_CHECKLIST.md)
 
-Sprint 3 (weeks 5–6) — **Hyper-MVP close**:
-- Manager scoring UI (backend exists)
-- Weighted composite + CSV export for appraisal system
-- Assessment cycle lock + finalize (HR)
-- Basic HR dashboard (completion % per team)
-- Pilot UAT with 20 employees
-- Production deployment runbook + go/no-go gate
+## Next (Phase 2 — starts 2026-06-08)
 
-Sprint 3 is the final sprint before the 2026-05-31 appraisal-cycle deadline.
+After stable Hyper-MVP operation, Phase 2 adds AI intelligence:
+- AI artifact analysis via Claude (artifact content → rubric-dimension scores + reasoning + confidence)
+- AI-suggested scores surfaced on the manager scoring page (replaces the `AiSuggestionBadge` placeholder)
+- Peer feedback module (360° input)
+- Skill gap detection + learning path recommendations
+- Prompt Library (org-wide, searchable)
+- Advanced analytics (heatmaps, trend analysis)
+- HRMS bi-directional API integration
+- Mobile React Native app
+- Bias detection (statistical outlier analysis across managers)
+
+See [BUILD_PLAN.md](BUILD_PLAN.md) §7 for the Phase 2 sprint breakdown.

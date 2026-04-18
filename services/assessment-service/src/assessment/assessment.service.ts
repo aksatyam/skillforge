@@ -66,7 +66,12 @@ export class AssessmentService {
       const a = await tx.assessment.findFirst({
         where: { id: assessmentId, deletedAt: null },
         include: {
-          cycle: { include: { framework: { include: { roleMappings: true } } } },
+          cycle: {
+            include: {
+              framework: { include: { roleMappings: true } },
+              org: { select: { settingsJson: true } },
+            },
+          },
           artifacts: true,
           user: {
             select: {

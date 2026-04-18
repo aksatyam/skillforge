@@ -14,6 +14,7 @@ import {
   Users,
   Settings2,
   Library,
+  BarChart3,
 } from 'lucide-react';
 
 type NavItem = {
@@ -35,6 +36,7 @@ const NAV: NavItem[] = [
   },
   { href: '/users', label: 'Users', icon: <Users size={18} />, roles: ['hr_admin'] },
   { href: '/cycles', label: 'Cycles', icon: <Settings2 size={18} />, roles: ['hr_admin'] },
+  { href: '/hr', label: 'HR Dashboard', icon: <BarChart3 size={18} />, roles: ['hr_admin'] },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {

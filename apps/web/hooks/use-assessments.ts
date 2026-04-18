@@ -48,7 +48,12 @@ export type AssessmentListItem = {
   status: AssessmentStatus;
   selfScore: number | null;
   managerScore: number | null;
+  peerScore: number | null;
+  aiScore: number | null;
+  aiConfidence: number | null;
   compositeScore: number | null;
+  managerRationale: string | null;
+  finalizedAt: string | null;
   submittedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -78,6 +83,11 @@ export type RoleMapping = {
 
 export type AssessmentDetail = AssessmentListItem & {
   cycle: AssessmentListItem['cycle'] & {
+    org?: {
+      settingsJson?: {
+        assessmentWeights?: { self: number; manager: number; peer: number; ai: number };
+      } | null;
+    };
     framework: AssessmentListItem['cycle']['framework'] & {
       id: string;
       roleMappings: RoleMapping[];

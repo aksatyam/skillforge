@@ -65,4 +65,37 @@ export class CycleController {
     const { status } = TransitionDto.parse(body);
     return this.cycles.transition(orgId, id, status);
   }
+
+  // ── Sprint 3 Feature #16 — finalize + close ────────────────────
+
+  @Roles('hr_admin')
+  @Post(':id/finalize-all')
+  finalizeAll(
+    @CurrentTenant() orgId: TenantId,
+    @CurrentUser() user: JwtClaims,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.cycles.bulkFinalize(orgId, id, user.sub);
+  }
+
+  @Roles('hr_admin')
+  @Post(':id/close')
+  close(
+    @CurrentTenant() orgId: TenantId,
+    @CurrentUser() user: JwtClaims,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.cycles.closeCycle(orgId, id, user.sub);
+  }
+
+  @Roles('hr_admin')
+  @Post(':id/assessments/:assessmentId/finalize')
+  finalizeOne(
+    @CurrentTenant() orgId: TenantId,
+    @CurrentUser() user: JwtClaims,
+    @Param('id', ParseUUIDPipe) cycleId: string,
+    @Param('assessmentId', ParseUUIDPipe) assessmentId: string,
+  ) {
+    return this.cycles.finalizeAssessment(orgId, cycleId, assessmentId, user.sub);
+  }
 }

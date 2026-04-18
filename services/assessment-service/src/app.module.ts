@@ -17,6 +17,7 @@ import { CycleModule } from './cycle/cycle.module';
 import { AssessmentModule } from './assessment/assessment.module';
 import { ArtifactModule } from './artifact/artifact.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { ExportModule } from './export/export.module';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { NotificationsModule } from './notifications/notifications.module';
     AssessmentModule,
     ArtifactModule,
     NotificationsModule,
+    ExportModule,
   ],
   providers: [
     // Guard chain (order matters):

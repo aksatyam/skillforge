@@ -1,5 +1,5 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
-import { CycleStatus } from '@skillforge/db';
+import { CycleStatus, prismaAdmin } from '@skillforge/db';
 import { withTenant, type TenantId } from '@skillforge/tenant-guard';
 import type { CreateCycleDto } from '@skillforge/shared-types';
 
@@ -203,5 +203,124 @@ export class CycleService {
         ),
       };
     });
+  }
+
+  // ── Sprint 3 Feature #16 — Finalize + close ────────────────────
+
+  /**
+   * Finalize a single assessment inside a locked cycle.
+   *
+   * Preconditions:
+   *   - cycle.status === 'locked'   (else 400)
+   *   - assessment.status === 'composite_computed'   (else 400)
+   *
+   * Writes an explicit `assessment.finalized` audit row via prismaAdmin
+   * so the business event survives even if RLS resets mid-request.
+   */
+  async finalizeAssessment(
+    orgId: TenantId,
+    cycleId: string,
+    assessmentId: string,
+    actorId: string,
+  ) {
+    const updated = await withTenant(orgId, async (tx) => {
+      const cycle = await tx.assessmentCycle.findFirst({
+        where: { id: cycleId, deletedAt: null },
+      });
+      if (!cycle) throw new NotFoundException();
+      if (cycle.status !== 'locked') {
+        throw new BadRequestException(
+          'can only finalize assessments in a locked cycle',
+        );
+      }
+
+      const a = await tx.assessment.findFirst({
+        where: { id: assessmentId, cycleId, deletedAt: null },
+      });
+      if (!a) throw new NotFoundException();
+      if (a.status !== 'composite_computed') {
+        throw new BadRequestException(
+          `cannot finalize assessment in status: ${a.status} (expected composite_computed)`,
+        );
+      }
+
+      return tx.assessment.update({
+        where: { id: assessmentId },
+        data: { status: 'finalized', finalizedAt: new Date() },
+      });
+    });
+
+    await prismaAdmin.auditLog.create({
+      data: {
+        orgId,
+        actorId,
+        action: 'assessment.finalized',
+        entityType: 'assessment',
+        entityId: assessmentId,
+        newValue: { status: 'finalized', finalizedAt: updated.finalizedAt },
+      },
+    });
+
+    return updated;
+  }
+
+  /**
+   * Bulk-finalize every `composite_computed` assessment in a locked cycle.
+   * Writes ONE summary audit row; per-row audit is left to finalizeAssessment().
+   */
+  async bulkFinalize(orgId: TenantId, cycleId: string, actorId: string) {
+    const result = await withTenant(orgId, async (tx) => {
+      const cycle = await tx.assessmentCycle.findFirst({
+        where: { id: cycleId, deletedAt: null },
+      });
+      if (!cycle) throw new NotFoundException();
+      if (cycle.status !== 'locked') {
+        throw new BadRequestException(
+          'can only bulk-finalize assessments in a locked cycle',
+        );
+      }
+
+      const res = await tx.assessment.updateMany({
+        where: { cycleId, status: 'composite_computed' },
+        data: { status: 'finalized', finalizedAt: new Date() },
+      });
+      return { finalizedCount: res.count };
+    });
+
+    await prismaAdmin.auditLog.create({
+      data: {
+        orgId,
+        actorId,
+        action: 'cycle.bulk_finalized',
+        entityType: 'cycle',
+        entityId: cycleId,
+        newValue: { finalizedCount: result.finalizedCount },
+      },
+    });
+
+    return result;
+  }
+
+  /**
+   * Safer wrapper over transition(cycleId, 'closed') — explicitly runs
+   * bulkFinalize first, so every composite_computed row is flipped to
+   * `finalized` as an audited step.
+   */
+  async closeCycle(orgId: TenantId, cycleId: string, actorId: string) {
+    await this.bulkFinalize(orgId, cycleId, actorId);
+    const updated = await this.transition(orgId, cycleId, 'closed');
+
+    await prismaAdmin.auditLog.create({
+      data: {
+        orgId,
+        actorId,
+        action: 'cycle.closed',
+        entityType: 'cycle',
+        entityId: cycleId,
+        newValue: { status: 'closed' },
+      },
+    });
+
+    return updated;
   }
 }
