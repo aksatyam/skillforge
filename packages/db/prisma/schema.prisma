@@ -1,0 +1,387 @@
+// SkillForge AI — Prisma schema (single source of truth)
+// Source: SkillForge_AI_Project_Plan.docx §6 + memory/reference_data_model.md
+// Tenancy: RLS on single schema per ADR-002
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider          = "postgresql"
+  url               = env("DATABASE_URL")
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
+  extensions        = [pgcrypto]
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ENUMS
+// ═══════════════════════════════════════════════════════════════
+
+enum UserRole {
+  employee
+  manager
+  hr_admin
+  ai_champion
+  leadership
+  super_admin
+}
+
+enum CycleStatus {
+  draft
+  open
+  locked
+  closed
+}
+
+enum AssessmentStatus {
+  not_started
+  self_submitted
+  manager_in_progress
+  peer_submitted
+  ai_analyzed
+  manager_scored
+  composite_computed
+  finalized
+}
+
+enum FrameworkStatus {
+  draft
+  active
+  archived
+}
+
+enum ArtifactType {
+  document
+  code
+  presentation
+  prompt
+  other
+}
+
+enum ResourceType {
+  course
+  book
+  article
+  video
+  workshop
+  mentor
+}
+
+enum Priority {
+  low
+  medium
+  high
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ORGANIZATIONS (tenants) — not itself tenant-scoped
+// ═══════════════════════════════════════════════════════════════
+
+model Organization {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name              String
+  domain            String   @unique
+  subscriptionPlan  String   @default("internal") @map("subscription_plan")
+  settingsJson      Json     @default("{}") @map("settings_json")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt         DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  users                User[]
+  frameworks           CompetencyFramework[]
+  cycles               AssessmentCycle[]
+  promptLibraryEntries PromptLibraryEntry[]
+  auditLogs            AuditLog[]
+
+  @@map("organizations")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// USERS
+// ═══════════════════════════════════════════════════════════════
+
+model User {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId              String    @map("org_id") @db.Uuid
+  email              String
+  name               String
+  roleFamily         String    @map("role_family") // e.g. "Engineering", "Product"
+  designation        String
+  role               UserRole  @default(employee)
+  managerId          String?   @map("manager_id") @db.Uuid
+  authProviderId     String?   @map("auth_provider_id")     // Keycloak subject UUID (null = dev auth)
+  passwordHash       String?   @map("password_hash")        // nullable — SSO users have no local password
+  inviteTokenHash    String?   @unique @map("invite_token_hash") // sha256 of one-time invite token
+  inviteExpiresAt    DateTime? @map("invite_expires_at") @db.Timestamptz(6)
+  inviteAcceptedAt   DateTime? @map("invite_accepted_at") @db.Timestamptz(6)
+  mfaEnabled         Boolean   @default(false) @map("mfa_enabled")
+  lastLoginAt        DateTime? @map("last_login_at") @db.Timestamptz(6)
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById        String?   @map("created_by") @db.Uuid
+  deletedAt          DateTime? @map("deleted_at") @db.Timestamptz(6)
+  version            Int       @default(1)
+
+  org             Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  manager         User?        @relation("UserManager", fields: [managerId], references: [id], onDelete: SetNull)
+  reports         User[]       @relation("UserManager")
+
+  assessmentsAsSubject    Assessment[]     @relation("SubjectAssessments")
+  peerReviewsWritten      PeerReview[]
+  artifactsOwned          Artifact[]
+  promptsAuthored         PromptLibraryEntry[]
+  auditLogsActor          AuditLog[]       @relation("AuditActor")
+
+  @@unique([orgId, email])
+  @@index([orgId])
+  @@index([managerId])
+  @@map("users")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// COMPETENCY FRAMEWORK
+// ═══════════════════════════════════════════════════════════════
+
+model CompetencyFramework {
+  id               String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId            String          @map("org_id") @db.Uuid
+  name             String
+  version          Int             @default(1)
+  status           FrameworkStatus @default(draft)
+  maturityLevelsJson Json          @map("maturity_levels_json") // ordered list [{level:1, name:"Aware", def:"..."}]
+  createdAt        DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById      String?         @map("created_by") @db.Uuid
+  deletedAt        DateTime?       @map("deleted_at") @db.Timestamptz(6)
+
+  org          Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  roleMappings RoleMapping[]
+  cycles       AssessmentCycle[]
+
+  @@index([orgId])
+  @@map("competency_frameworks")
+}
+
+model RoleMapping {
+  id                     String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  frameworkId            String   @map("framework_id") @db.Uuid
+  roleFamily             String   @map("role_family")
+  targetLevel            Int      @map("target_level")
+  assessmentCriteriaJson Json     @map("assessment_criteria_json")
+  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  framework CompetencyFramework @relation(fields: [frameworkId], references: [id], onDelete: Cascade)
+
+  @@unique([frameworkId, roleFamily])
+  @@index([frameworkId])
+  @@map("role_mappings")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ASSESSMENT CYCLE
+// ═══════════════════════════════════════════════════════════════
+
+model AssessmentCycle {
+  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId       String      @map("org_id") @db.Uuid
+  frameworkId String      @map("framework_id") @db.Uuid
+  name        String
+  startDate   DateTime    @map("start_date") @db.Date
+  endDate     DateTime    @map("end_date") @db.Date
+  status      CycleStatus @default(draft)
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById String?     @map("created_by") @db.Uuid
+  deletedAt   DateTime?   @map("deleted_at") @db.Timestamptz(6)
+
+  org         Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  framework   CompetencyFramework @relation(fields: [frameworkId], references: [id], onDelete: Restrict)
+  assessments Assessment[]
+
+  @@index([orgId])
+  @@index([frameworkId])
+  @@index([orgId, status])
+  @@map("assessment_cycles")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ASSESSMENT (per user, per cycle)
+// ═══════════════════════════════════════════════════════════════
+
+model Assessment {
+  id               String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cycleId          String           @map("cycle_id") @db.Uuid
+  userId           String           @map("user_id") @db.Uuid
+  selfScore        Decimal?         @map("self_score") @db.Decimal(5, 2)
+  managerScore     Decimal?         @map("manager_score") @db.Decimal(5, 2)
+  peerScore        Decimal?         @map("peer_score") @db.Decimal(5, 2)
+  aiScore          Decimal?         @map("ai_score") @db.Decimal(5, 2)
+  aiConfidence     Int?             @map("ai_confidence") // 0-100 per ADR-006
+  compositeScore   Decimal?         @map("composite_score") @db.Decimal(5, 2)
+  status           AssessmentStatus @default(not_started)
+  managerRationale String?          @map("manager_rationale") @db.Text
+  createdAt        DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  submittedAt      DateTime?        @map("submitted_at") @db.Timestamptz(6)
+  finalizedAt      DateTime?        @map("finalized_at") @db.Timestamptz(6)
+  deletedAt        DateTime?        @map("deleted_at") @db.Timestamptz(6)
+  version          Int              @default(1)
+
+  cycle                   AssessmentCycle         @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  user                    User                    @relation("SubjectAssessments", fields: [userId], references: [id], onDelete: Cascade)
+  artifacts               Artifact[]
+  peerReviews             PeerReview[]
+  learningRecommendations LearningRecommendation[]
+
+  @@unique([cycleId, userId])
+  @@index([cycleId])
+  @@index([userId])
+  @@index([status])
+  @@map("assessments")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ARTIFACT (uploaded by employee, analyzed by AI in Phase 2)
+// ═══════════════════════════════════════════════════════════════
+
+model Artifact {
+  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  assessmentId   String       @map("assessment_id") @db.Uuid
+  userId         String       @map("user_id") @db.Uuid
+  fileUrl        String       @map("file_url")
+  fileName       String       @map("file_name")
+  fileSizeBytes  Int          @map("file_size_bytes")
+  mimeType       String       @map("mime_type")
+  artifactType   ArtifactType @map("artifact_type")
+  aiAnalysisJson Json?        @map("ai_analysis_json") // populated by Phase 2 AI pipeline
+  aiAnalyzedAt   DateTime?    @map("ai_analyzed_at") @db.Timestamptz(6)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt      DateTime?    @map("deleted_at") @db.Timestamptz(6)
+
+  assessment Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([assessmentId])
+  @@index([userId])
+  @@map("artifacts")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PEER REVIEW (Phase 2)
+// ═══════════════════════════════════════════════════════════════
+
+model PeerReview {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  assessmentId String    @map("assessment_id") @db.Uuid
+  reviewerId   String    @map("reviewer_id") @db.Uuid
+  ratingsJson  Json      @map("ratings_json")
+  comments     String?   @db.Text
+  submittedAt  DateTime? @map("submitted_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt    DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  assessment Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  reviewer   User       @relation(fields: [reviewerId], references: [id], onDelete: Cascade)
+
+  @@unique([assessmentId, reviewerId])
+  @@index([assessmentId])
+  @@index([reviewerId])
+  @@map("peer_reviews")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// LEARNING RECOMMENDATION (Phase 2)
+// ═══════════════════════════════════════════════════════════════
+
+model LearningRecommendation {
+  id                  String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  assessmentId        String       @map("assessment_id") @db.Uuid
+  skillGap            String       @map("skill_gap")
+  recommendedResource String       @map("recommended_resource")
+  resourceUrl         String?      @map("resource_url")
+  resourceType        ResourceType @map("resource_type")
+  priority            Priority     @default(medium)
+  createdAt           DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  assessment Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+
+  @@index([assessmentId])
+  @@map("learning_recommendations")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PROMPT LIBRARY (Phase 2)
+// ═══════════════════════════════════════════════════════════════
+
+model PromptLibraryEntry {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId      String   @map("org_id") @db.Uuid
+  authorId   String   @map("author_id") @db.Uuid
+  title      String
+  promptText String   @map("prompt_text") @db.Text
+  category   String
+  rating     Decimal  @default(0) @db.Decimal(3, 2)
+  usageCount Int      @default(0) @map("usage_count")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt  DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  org    Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  author User         @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+  @@index([authorId])
+  @@index([category])
+  @@map("prompt_library_entries")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// AUDIT LOG (append-only per plan §8)
+// ═══════════════════════════════════════════════════════════════
+
+model AuditLog {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId          String   @map("org_id") @db.Uuid
+  actorId        String?  @map("actor_id") @db.Uuid
+  action         String   // e.g. "assessment.score_updated", "cycle.status_changed", "cross_tenant_access"
+  entityType     String   @map("entity_type")
+  entityId       String?  @map("entity_id") @db.Uuid
+  previousValue  Json?    @map("previous_value")
+  newValue       Json?    @map("new_value")
+  rationale      String?  @db.Text
+  ipAddress      String?  @map("ip_address")
+  userAgent      String?  @map("user_agent")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  org   Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  actor User?        @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, createdAt])
+  @@index([actorId])
+  @@index([entityType, entityId])
+  @@index([action])
+  @@map("audit_log")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// REFRESH TOKEN (auth — revocable in Redis but persisted for audit)
+// ═══════════════════════════════════════════════════════════════
+
+model RefreshToken {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  tokenHash  String    @unique @map("token_hash")
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz(6)
+  replacedBy String?   @map("replaced_by") @db.Uuid
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}

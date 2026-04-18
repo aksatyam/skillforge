@@ -1,0 +1,184 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TURBO_TELEMETRY_DISABLED: 1
+
+jobs:
+  # ── Fast checks (lint, typecheck, format) ─────────────────────
+  check:
+    name: Lint, Typecheck, Format
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.11.0
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Prisma generate
+        run: pnpm db:generate
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Format check
+        run: pnpm format:check
+
+  # ── Tenant-isolation scan (SkillForge-specific invariant) ────
+  tenant-check:
+    name: Tenant-isolation scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run tenant-check skill
+        run: |
+          if [ -f .claude/skills/sf-tenant-check/scan.sh ]; then
+            bash .claude/skills/sf-tenant-check/scan.sh
+          else
+            echo "Tenant-check scan script not found; skipping (will be added Sprint 1)"
+          fi
+
+  # ── Tests (unit + integration against real Postgres) ─────────
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: skillforge
+          POSTGRES_PASSWORD: skillforge
+          POSTGRES_DB: skillforge
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://skillforge:skillforge@localhost:5432/skillforge?schema=public
+      SHADOW_DATABASE_URL: postgresql://skillforge:skillforge@localhost:5432/skillforge_shadow?schema=public
+      REDIS_URL: redis://localhost:6379
+      JWT_SECRET: ci-only-32-chars-not-real-secret-abcd
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.11.0
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Create shadow DB
+        run: PGPASSWORD=skillforge psql -U skillforge -h localhost -d skillforge -c "CREATE DATABASE skillforge_shadow;" || true
+
+      - name: Apply migrations
+        run: pnpm db:migrate:deploy
+
+      - name: Tests
+        run: pnpm test
+
+  # ── Build (all workspaces) ────────────────────────────────────
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [check]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.11.0
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Prisma generate
+        run: pnpm db:generate
+
+      - name: Build
+        run: pnpm build
+
+  # ── Security scans (npm audit + secret scan) ─────────────────
+  security:
+    name: Security
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.11.0
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: pnpm audit (high+)
+        run: pnpm audit --audit-level=high --prod
+
+      - name: Semgrep SAST
+        uses: returntocorp/semgrep-action@v1
+        continue-on-error: true
+        with:
+          config: p/security-audit p/owasp-top-ten p/typescript
+
+      - name: Gitleaks (secret scan)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

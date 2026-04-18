@@ -1,0 +1,36 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "incremental": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "paths": {
+      "@skillforge/shared-types": ["./packages/shared-types/src"],
+      "@skillforge/shared-types/*": ["./packages/shared-types/src/*"],
+      "@skillforge/tenant-guard": ["./packages/tenant-guard/src"],
+      "@skillforge/tenant-guard/*": ["./packages/tenant-guard/src/*"],
+      "@skillforge/ui": ["./packages/ui/src"],
+      "@skillforge/ui/*": ["./packages/ui/src/*"],
+      "@skillforge/config": ["./packages/config/src"],
+      "@skillforge/config/*": ["./packages/config/src/*"]
+    }
+  },
+  "exclude": ["node_modules", "dist", ".next", ".turbo", "coverage"]
+}

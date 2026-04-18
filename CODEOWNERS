@@ -1,0 +1,38 @@
+# SkillForge AI — CODEOWNERS
+# Order matters; last matching pattern wins.
+
+# Default: Tech Lead reviews everything
+*                                   @skillforge-tech-lead
+
+# Backend services
+/services/                          @skillforge-be-lead
+/services/ai-evaluation/            @skillforge-ai-engineer @skillforge-be-lead
+/services/integration-service/      @skillforge-be-lead @skillforge-tech-lead
+
+# Frontend
+/apps/web/                          @skillforge-fe-lead
+/apps/mobile/                       @skillforge-fe-lead
+/packages/ui/                       @skillforge-fe-lead @skillforge-ux
+
+# Shared / cross-cutting
+/packages/shared-types/             @skillforge-tech-lead
+/packages/tenant-guard/             @skillforge-tech-lead @skillforge-security-lead
+/packages/config/                   @skillforge-tech-lead
+
+# AI prompts
+/prompts/                           @skillforge-ai-engineer @skillforge-security-lead
+
+# Infrastructure
+/infra/                             @skillforge-devops @skillforge-tech-lead
+/.github/workflows/                 @skillforge-devops @skillforge-tech-lead
+/tools/                             @skillforge-devops
+
+# Docs + plans
+/docs/adr/                          @skillforge-tech-lead
+/BUILD_PLAN.md                      @skillforge-product-owner @skillforge-tech-lead
+/OPEN_DECISIONS.md                  @skillforge-tech-lead
+/CLAUDE.md                          @skillforge-tech-lead
+
+# Database
+/packages/db/                       @skillforge-be-lead @skillforge-tech-lead
+/packages/db/prisma/schema.prisma   @skillforge-be-lead @skillforge-tech-lead @skillforge-security-lead
