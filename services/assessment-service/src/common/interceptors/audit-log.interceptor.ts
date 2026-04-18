@@ -80,13 +80,20 @@ export class AuditLogInterceptor implements NestInterceptor {
         /([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})/i;
       const entityId = uuidRe.exec(url)?.[1];
 
-      // Uses prismaAdmin (BYPASSRLS) — audit writes must succeed regardless
-      // of the request's tenant context (a cross-tenant access has no valid
-      // current_org_id to match the RLS WITH CHECK policy otherwise).
+      // Skip audit for requests without authenticated tenant context
+      // (e.g. failed logins, unauthenticated writes). The actionable security
+      // event there is the auth failure itself, which the auth layer logs.
+      // Writing with a sentinel orgId fails the FK to organizations.
+      if (!req.user?.orgId) {
+        return;
+      }
+
+      // Uses prismaAdmin (BYPASSRLS) — audit writes bypass the RLS WITH CHECK
+      // policy so they succeed even for @AllowCrossTenant routes.
       await prismaAdmin.auditLog.create({
         data: {
-          orgId: req.user?.orgId ?? '00000000-0000-0000-0000-000000000000',
-          actorId: req.user?.sub,
+          orgId: req.user.orgId,
+          actorId: req.user.sub,
           action: `${action}:${outcome}`,
           entityType: ctx.getClass().name.replace(/Controller$/, '').toLowerCase(),
           entityId,

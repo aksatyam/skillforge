@@ -18,6 +18,7 @@ import { AssessmentModule } from './assessment/assessment.module';
 import { ArtifactModule } from './artifact/artifact.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { ExportModule } from './export/export.module';
+import { StatsModule } from './stats/stats.module';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { ExportModule } from './export/export.module';
     ArtifactModule,
     NotificationsModule,
     ExportModule,
+    StatsModule,
   ],
   providers: [
     // Guard chain (order matters):

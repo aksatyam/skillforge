@@ -15,6 +15,8 @@ import {
   Settings2,
   Library,
   BarChart3,
+  BarChart2,
+  TrendingUp,
 } from 'lucide-react';
 
 type NavItem = {
@@ -27,7 +29,19 @@ type NavItem = {
 const NAV: NavItem[] = [
   { href: '/dashboard', label: 'Dashboard', icon: <LayoutDashboard size={18} /> },
   { href: '/assessments', label: 'My Assessments', icon: <ClipboardList size={18} /> },
-  { href: '/team', label: 'Team', icon: <Users size={18} />, roles: ['manager', 'hr_admin'] },
+  { href: '/scorecard', label: 'My scorecard', icon: <TrendingUp size={18} /> },
+  {
+    href: '/team/overview',
+    label: 'Team overview',
+    icon: <BarChart3 size={18} />,
+    roles: ['manager', 'hr_admin'],
+  },
+  {
+    href: '/team',
+    label: 'Team roster',
+    icon: <Users size={18} />,
+    roles: ['manager', 'hr_admin'],
+  },
   {
     href: '/frameworks',
     label: 'Frameworks',
@@ -36,6 +50,7 @@ const NAV: NavItem[] = [
   },
   { href: '/users', label: 'Users', icon: <Users size={18} />, roles: ['hr_admin'] },
   { href: '/cycles', label: 'Cycles', icon: <Settings2 size={18} />, roles: ['hr_admin'] },
+  { href: '/hr/reports', label: 'Reports', icon: <BarChart2 size={18} />, roles: ['hr_admin'] },
   { href: '/hr', label: 'HR Dashboard', icon: <BarChart3 size={18} />, roles: ['hr_admin'] },
 ];
 
@@ -119,7 +134,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
         <nav className="flex-1 p-2">
           {visibleNav.map((item) => {
-            const active = pathname === item.href || pathname.startsWith(item.href + '/');
+            // Prefer the longest-matching href so siblings like `/team` and
+            // `/team/overview` don't both light up when on the child route.
+            const match = pathname === item.href || pathname.startsWith(item.href + '/');
+            const betterMatch = visibleNav.some(
+              (other) =>
+                other.href !== item.href &&
+                other.href.length > item.href.length &&
+                (pathname === other.href || pathname.startsWith(other.href + '/')),
+            );
+            const active = match && !betterMatch;
             return (
               <Link
                 key={item.href}
