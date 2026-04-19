@@ -275,3 +275,32 @@ export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
   assignment: { enabled: true },
   managerReview: { enabled: true },
 };
+
+// ── CSV export templates (Sprint 6 feature #3) ──────────────────
+// HR can pick a preset that matches the target HRIS (SAP SuccessFactors,
+// Workday, Oracle HCM, or the SkillForge default) or craft a custom
+// column mapping saved in organization.settings_json.exportTemplates.
+
+export const ExportColumnSchema = z.object({
+  header: z.string().min(1).max(100),
+  source: z.string().min(1).max(100),
+});
+export type ExportColumn = z.infer<typeof ExportColumnSchema>;
+
+export const ExportTemplateSchema = z.object({
+  id: z
+    .string()
+    .min(1)
+    .max(60)
+    .regex(/^[a-z0-9-]+$/, 'id must be lowercase kebab-case'),
+  name: z.string().min(1).max(120),
+  columns: z.array(ExportColumnSchema).min(1).max(40),
+  builtin: z.boolean().default(false),
+});
+export type ExportTemplate = z.infer<typeof ExportTemplateSchema>;
+
+// Upsert DTO: clients never set `builtin` — the server guards that flag.
+export const UpsertExportTemplateDtoSchema = ExportTemplateSchema.omit({
+  builtin: true,
+});
+export type UpsertExportTemplateDto = z.infer<typeof UpsertExportTemplateDtoSchema>;

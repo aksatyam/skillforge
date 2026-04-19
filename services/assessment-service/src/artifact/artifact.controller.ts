@@ -49,9 +49,27 @@ export class ArtifactController {
   }
 
   /**
-   * Raw-bytes upload endpoint. Public + HMAC-token-protected so the browser
-   * can PUT the file directly using the token returned from /upload-url
-   * (no JWT needed for this request). Sprint 3 replaces with S3 presigned URLs.
+   * Mint a short-lived download URL the browser can follow. Works in
+   * both modes: local returns a relative `/artifacts/:id/download?token=`
+   * URL that hits {@link download}, s3 returns an absolute presigned URL
+   * straight to the bucket.
+   */
+  @ApiBearerAuth()
+  @Get(':id/download-url')
+  async requestDownloadUrl(
+    @CurrentTenant() orgId: TenantId,
+    @CurrentUser() user: JwtClaims,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.artifacts.requestDownloadUrl(orgId, user.sub, id);
+  }
+
+  /**
+   * Raw-bytes upload endpoint. Public + HMAC-token-protected so the
+   * browser can PUT the file directly using the token returned from
+   * `/upload-url` (no JWT needed for this request). Returns 400 when
+   * STORAGE_MODE=s3 because the browser PUTs directly to the bucket in
+   * that mode.
    */
   @Public()
   @Put(':id/upload')
@@ -69,5 +87,30 @@ export class ArtifactController {
     const buffer = Buffer.concat(chunks);
     const updated = await this.artifacts.acceptUpload(id, token, buffer, contentType);
     res.status(200).json(updated);
+  }
+
+  /**
+   * Raw-bytes download endpoint. Public + HMAC-token-protected — the
+   * token is minted by {@link requestDownloadUrl} after the authed role
+   * check. Local mode only; the route is present but returns 400 in s3
+   * mode because the browser is redirected to the presigned S3 URL.
+   */
+  @Public()
+  @Get(':id/download')
+  async download(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('token') token: string,
+    @Res() res: Response,
+  ) {
+    const { buffer, fileName, mimeType } = await this.artifacts.streamLocalDownload(
+      id,
+      token,
+    );
+    res.setHeader('content-type', mimeType);
+    res.setHeader(
+      'content-disposition',
+      `attachment; filename="${fileName.replace(/["\r\n]/g, '_')}"`,
+    );
+    res.status(200).send(buffer);
   }
 }

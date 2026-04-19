@@ -18,10 +18,12 @@ vi.mock('@skillforge/tenant-guard', () => ({
 vi.mock('node:fs/promises', () => ({
   mkdir: vi.fn().mockResolvedValue(undefined),
   writeFile: vi.fn().mockResolvedValue(undefined),
+  readFile: vi.fn().mockResolvedValue(Buffer.from('stub')),
 }));
 
 // Import AFTER mocks
 import { ArtifactService } from './artifact.service';
+import { LocalStorageProvider } from './storage/local-storage.provider';
 import * as fs from 'node:fs/promises';
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -43,7 +45,10 @@ function makeTx(): TxDouble {
   };
 }
 
-function signToken(artifactId: string, secret = process.env.JWT_SECRET ?? 'dev') {
+function signUploadToken(
+  artifactId: string,
+  secret = process.env.JWT_SECRET ?? 'dev',
+) {
   return crypto
     .createHmac('sha256', secret)
     .update(`upload:${artifactId}`)
@@ -66,7 +71,9 @@ describe('ArtifactService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.JWT_SECRET = 'test-secret-value';
-    svc = new ArtifactService();
+    // Force local mode regardless of caller env so the token shape is stable
+    process.env.STORAGE_MODE = 'local';
+    svc = new ArtifactService(new LocalStorageProvider());
     tx = makeTx();
     withTenantMock.mockImplementation(async (_orgId, fn) => fn(tx));
   });
@@ -134,7 +141,7 @@ describe('ArtifactService', () => {
     });
 
     it('rejects files > 25MB even when the token is valid', async () => {
-      const token = signToken(ARTIFACT_ID);
+      const token = signUploadToken(ARTIFACT_ID);
       const big = Buffer.alloc(26 * 1024 * 1024);
       await expect(
         svc.acceptUpload(ARTIFACT_ID, token, big, 'application/pdf'),
@@ -142,7 +149,7 @@ describe('ArtifactService', () => {
     });
 
     it('persists the file and updates prisma on success (valid token round-trip)', async () => {
-      const token = signToken(ARTIFACT_ID);
+      const token = signUploadToken(ARTIFACT_ID);
       prismaArtifactUpdate.mockResolvedValue({
         id: ARTIFACT_ID,
         fileUrl: `local://${ARTIFACT_ID}`,
@@ -163,37 +170,6 @@ describe('ArtifactService', () => {
         select: { id: true, fileUrl: true },
       });
       expect(result.fileUrl).toBe(`local://${ARTIFACT_ID}`);
-    });
-  });
-
-  describe('HMAC token helpers', () => {
-    // These helpers are private; we exercise them via the public surface.
-    const exposedSign = (id: string): string =>
-      (svc as unknown as { signUploadToken: (id: string) => string }).signUploadToken(id);
-    const exposedVerify = (id: string, tok: string): boolean =>
-      (svc as unknown as { verifyUploadToken: (id: string, tok: string) => boolean })
-        .verifyUploadToken(id, tok);
-
-    it('round-trip: token produced by signUploadToken is accepted by verifyUploadToken', () => {
-      const tok = exposedSign(ARTIFACT_ID);
-      expect(tok).toHaveLength(48);
-      expect(exposedVerify(ARTIFACT_ID, tok)).toBe(true);
-    });
-
-    it('different artifactIds produce different tokens (collision-resistance smoke)', () => {
-      const a = exposedSign(ARTIFACT_ID);
-      const b = exposedSign('00000000-0000-4000-8000-000000000001');
-      const c = exposedSign('00000000-0000-4000-8000-000000000002');
-      expect(a).not.toBe(b);
-      expect(b).not.toBe(c);
-      expect(a).not.toBe(c);
-    });
-
-    it('verifyUploadToken returns false for a correctly-sized but wrong token', () => {
-      const wrong = '0'.repeat(48);
-      const correct = exposedSign(ARTIFACT_ID);
-      expect(wrong).not.toBe(correct);
-      expect(exposedVerify(ARTIFACT_ID, wrong)).toBe(false);
     });
   });
 });

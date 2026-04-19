@@ -59,6 +59,15 @@ async function main() {
           employeeVisibility: 'after_submit', // ADR-008
           confidenceThresholds: { low: 60, high: 80 }, // ADR-006
         },
+        // Sprint 6 #1 — Keycloak OIDC SSO config (ADR-009).
+        // `issuer` must match the Keycloak realm URL the BFF sends in the
+        // exchange payload. `autoProvision=false` means users must exist
+        // (by email) before first SSO login; flip to true to let HR defer
+        // provisioning to the IdP.
+        sso: {
+          issuer: 'http://localhost:8080/realms/qualtech',
+          autoProvision: false,
+        },
       },
     },
   });

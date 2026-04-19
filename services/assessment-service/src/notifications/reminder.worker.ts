@@ -175,7 +175,7 @@ export class ReminderWorker {
     email: string;
     name: string;
     now: Date;
-    tenantTimezone: string;
+    tenantTimezone?: string;
   }): Promise<'sent' | 'skipped' | 'failed'> {
     const { orgId, cycleName, cycleEndDate, userId, email, name, now, tenantTimezone } = args;
     const key = `${IDEMPOTENCY_KEY_PREFIX}:${userId}:${ymd(now, tenantTimezone)}`;

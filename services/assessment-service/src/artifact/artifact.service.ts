@@ -1,14 +1,20 @@
 import {
   BadRequestException,
   ForbiddenException,
+  Inject,
   Injectable,
+  Optional,
   NotFoundException,
 } from '@nestjs/common';
 import { withTenant, type TenantId } from '@skillforge/tenant-guard';
 import type { RequestUploadUrlDto } from '@skillforge/shared-types';
-import * as path from 'node:path';
-import * as fs from 'node:fs/promises';
-import * as crypto from 'node:crypto';
+
+import { LocalStorageProvider } from './storage/local-storage.provider';
+import { createStorageProvider } from './storage/storage.factory';
+import {
+  STORAGE_PROVIDER,
+  type StorageProvider,
+} from './storage/storage-provider.interface';
 
 const ALLOWED_MIME = new Set([
   'application/pdf',
@@ -28,17 +34,40 @@ const ALLOWED_MIME = new Set([
 const MAX_BYTES = 25 * 1024 * 1024;
 
 /**
- * Artifact upload service.
+ * Artifact upload/download service.
  *
- * Phase 1: local filesystem under STORAGE_LOCAL_PATH. Token-signed upload
- * URL protects against unauthenticated writes. The token is derived from
- * artifactId + JWT_SECRET so it's verifiable without DB lookup.
+ * Delegates the byte-handling dance to a {@link StorageProvider} picked
+ * at bootstrap from STORAGE_MODE. This class owns:
+ *   • DB row creation + persistence
+ *   • MIME + size + tenant authorization checks
+ *   • Access control for downloads (self / manager-of-record / hr_admin)
  *
- * Phase 3: swap to S3 presigned URLs with same external interface.
+ * Providers own:
+ *   • URL minting (relative HMAC tokens or absolute S3 presigned URLs)
+ *   • The local-mode byte write, if any
  */
 @Injectable()
 export class ArtifactService {
-  private readonly storageBase = process.env.STORAGE_LOCAL_PATH ?? './local-storage';
+  private readonly provider: StorageProvider;
+
+  /**
+   * Constructor accepts a `StorageProvider` via either:
+   *   • Nest DI with the `STORAGE_PROVIDER` token (see ArtifactModule), or
+   *   • Direct `new ArtifactService(new LocalStorageProvider())` in tests.
+   *
+   * The `@Inject + @Optional` pair lets Nest resolve the token when present
+   * but not fail when the service is instantiated outside DI (Vitest).
+   */
+  constructor(
+    @Optional() @Inject(STORAGE_PROVIDER) provider?: StorageProvider,
+  ) {
+    this.provider = provider ?? createStorageProvider();
+  }
+
+  /** Exposed for the controller so it can disable local-only routes in s3 mode. */
+  get storageMode(): 'local' | 's3' {
+    return this.provider.mode;
+  }
 
   async requestUploadUrl(
     orgId: TenantId,
@@ -55,7 +84,7 @@ export class ArtifactService {
     }
 
     return withTenant(orgId, async (tx) => {
-      // Caller must own the assessment they're uploading to
+      // Caller must own the assessment they're uploading to.
       const assessment = await tx.assessment.findFirst({
         where: { id: dto.assessmentId, deletedAt: null },
       });
@@ -66,7 +95,7 @@ export class ArtifactService {
         data: {
           assessmentId: dto.assessmentId,
           userId,
-          fileUrl: '', // filled on upload-complete
+          fileUrl: '', // filled on upload-complete (local) or lazily (s3)
           fileName: dto.fileName,
           fileSizeBytes: dto.fileSizeBytes,
           mimeType: dto.mimeType,
@@ -74,48 +103,126 @@ export class ArtifactService {
         },
       });
 
-      const token = this.signUploadToken(artifact.id);
-      return {
+      const { uploadUrl, headers } = await this.provider.issueUploadUrl({
         artifactId: artifact.id,
-        uploadUrl: `/artifacts/${artifact.id}/upload?token=${token}`,
-        headers: { 'content-type': dto.mimeType },
-      };
+        orgId,
+        mimeType: dto.mimeType,
+        fileSizeBytes: dto.fileSizeBytes,
+      });
+
+      return { artifactId: artifact.id, uploadUrl, headers };
     });
   }
 
+  /**
+   * Mint a short-lived download URL for an existing artifact, after
+   * verifying the caller is allowed to see it (self, manager-of-record,
+   * hr_admin, or super_admin).
+   */
+  async requestDownloadUrl(
+    orgId: TenantId,
+    userId: string,
+    artifactId: string,
+  ): Promise<{ downloadUrl: string }> {
+    return withTenant(orgId, async (tx) => {
+      const artifact = await tx.artifact.findFirst({
+        where: { id: artifactId, deletedAt: null },
+      });
+      if (!artifact) throw new NotFoundException();
+
+      const assessment = await tx.assessment.findFirst({
+        where: { id: artifact.assessmentId, deletedAt: null },
+      });
+      if (!assessment) throw new NotFoundException();
+
+      if (assessment.userId !== userId) {
+        const actor = await tx.user.findUnique({ where: { id: userId } });
+        const target = await tx.user.findUnique({
+          where: { id: assessment.userId },
+        });
+        if (
+          actor?.role !== 'hr_admin' &&
+          actor?.role !== 'super_admin' &&
+          target?.managerId !== userId
+        ) {
+          throw new ForbiddenException();
+        }
+      }
+
+      return this.provider.issueDownloadUrl({
+        artifactId,
+        orgId,
+        mimeType: artifact.mimeType ?? 'application/octet-stream',
+        fileName: artifact.fileName ?? artifactId,
+      });
+    });
+  }
+
+  /**
+   * Local-mode upload-completion callback. In s3 mode the browser PUTs
+   * directly to S3 and this path is unreachable (controller returns 400).
+   */
   async acceptUpload(
     artifactId: string,
     token: string,
     buffer: Buffer,
     mimeType: string,
   ): Promise<{ id: string; fileUrl: string }> {
-    if (!this.verifyUploadToken(artifactId, token)) {
-      throw new ForbiddenException('Invalid or expired upload token');
+    if (this.provider.mode !== 'local' || !this.provider.acceptUpload) {
+      throw new BadRequestException(
+        'Direct upload is disabled in s3 mode — use the presigned URL',
+      );
     }
     if (buffer.length > MAX_BYTES) {
       throw new BadRequestException('File exceeds 25MB limit');
     }
 
-    // Store under org-partitioned path for ops-friendliness later
-    await fs.mkdir(this.storageBase, { recursive: true });
-    const filePath = path.join(this.storageBase, `${artifactId}.bin`);
-    await fs.writeFile(filePath, buffer);
+    const { fileUrl } = await this.provider.acceptUpload({
+      artifactId,
+      token,
+      buffer,
+      mimeType,
+    });
 
-    // Uses prismaAdmin-style raw update? No — the controller is authenticated,
-    // so we're in a tenant context; use withTenant. But the token alone doesn't
-    // carry tenant info. We rely on the outer controller route being authed.
-    // For Sprint 2 local storage, fetch by artifactId which is unguessable (UUID
-    // + HMAC token). In Sprint 3 (S3), presigned URLs replace this entire path.
+    // The token alone doesn't carry tenant info, so this write happens
+    // through prismaAdmin-bypass. The HMAC guard in the provider ensures
+    // only holders of the one-shot token can trigger it.
     const { prisma } = await import('@skillforge/db');
     const updated = await prisma.artifact.update({
       where: { id: artifactId },
-      data: {
-        fileUrl: `local://${artifactId}`,
-        mimeType,
-      },
+      data: { fileUrl, mimeType },
       select: { id: true, fileUrl: true },
     });
     return updated;
+  }
+
+  /**
+   * Local-mode download streamer. Verifies the HMAC download token and
+   * returns the raw bytes + content headers. Throws 400 in s3 mode.
+   */
+  async streamLocalDownload(
+    artifactId: string,
+    token: string,
+  ): Promise<{ buffer: Buffer; fileName: string; mimeType: string }> {
+    if (this.provider.mode !== 'local') {
+      throw new BadRequestException(
+        'Direct download is disabled in s3 mode — use the presigned URL',
+      );
+    }
+    const { prisma } = await import('@skillforge/db');
+    const artifact = await prisma.artifact.findUnique({
+      where: { id: artifactId },
+      select: { fileName: true, mimeType: true },
+    });
+    if (!artifact) throw new NotFoundException();
+
+    const local = this.provider as LocalStorageProvider;
+    const buffer = await local.readArtifactBytes(artifactId, token);
+    return {
+      buffer,
+      fileName: artifact.fileName ?? `${artifactId}.bin`,
+      mimeType: artifact.mimeType ?? 'application/octet-stream',
+    };
   }
 
   async list(orgId: TenantId, userId: string, assessmentId: string) {
@@ -141,22 +248,5 @@ export class ArtifactService {
         orderBy: { createdAt: 'desc' },
       });
     });
-  }
-
-  // ── Token helpers (HMAC over artifactId with JWT_SECRET) ───────
-
-  private signUploadToken(artifactId: string): string {
-    return crypto
-      .createHmac('sha256', process.env.JWT_SECRET ?? 'dev')
-      .update(`upload:${artifactId}`)
-      .digest('hex')
-      .slice(0, 48);
-  }
-
-  private verifyUploadToken(artifactId: string, token: string): boolean {
-    const expected = this.signUploadToken(artifactId);
-    // Timing-safe compare
-    if (token.length !== expected.length) return false;
-    return crypto.timingSafeEqual(Buffer.from(token), Buffer.from(expected));
   }
 }

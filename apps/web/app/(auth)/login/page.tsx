@@ -1,14 +1,34 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { LoginDtoSchema, type LoginDto } from '@skillforge/shared-types';
 
+// NEXT_PUBLIC_ prefix makes this available at build-time in the client bundle.
+const SSO_ENABLED = process.env.NEXT_PUBLIC_SSO_ENABLED === 'true';
+
+/** Friendly strings for the ?sso_error=... codes emitted by the callback route. */
+const SSO_ERROR_LABELS: Record<string, string> = {
+  state_mismatch: 'Login expired or was tampered with. Please try again.',
+  state_missing: 'Login session lost. Please try signing in again.',
+  missing_params: 'Single sign-on did not complete. Please try again.',
+  token_exchange_failed: 'Identity provider rejected the sign-in.',
+  bridge_failed: 'Could not complete sign-in with SkillForge. Contact your admin.',
+};
+
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [serverError, setServerError] = useState<string | null>(null);
+
+  // Surface SSO errors posted via ?sso_error=...
+  useEffect(() => {
+    const code = searchParams.get('sso_error');
+    if (!code) return;
+    setServerError(SSO_ERROR_LABELS[code] ?? 'Single sign-on failed. Please try again.');
+  }, [searchParams]);
 
   const {
     register,
@@ -48,6 +68,22 @@ export default function LoginPage() {
       >
         <h1 className="mb-1 text-2xl font-bold text-brand-navy">SkillForge</h1>
         <p className="mb-6 text-sm text-brand-medium">Sign in to your account</p>
+
+        {SSO_ENABLED && (
+          <>
+            <a
+              href="/api/session/sso/start?returnTo=/dashboard"
+              className="mb-4 flex w-full items-center justify-center rounded-md border border-brand-navy bg-white py-2 text-sm font-semibold text-brand-navy hover:bg-brand-navy hover:text-white"
+            >
+              Sign in with SSO
+            </a>
+            <div className="mb-4 flex items-center gap-3">
+              <span className="h-px flex-1 bg-neutral-200" />
+              <span className="text-xs uppercase tracking-wide text-brand-medium">or</span>
+              <span className="h-px flex-1 bg-neutral-200" />
+            </div>
+          </>
+        )}
 
         <label className="mb-3 block">
           <span className="text-sm font-medium text-brand-dark">Email</span>

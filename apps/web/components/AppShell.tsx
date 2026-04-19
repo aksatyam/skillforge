@@ -17,6 +17,7 @@ import {
   BarChart2,
   TrendingUp,
   Bell,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { useEffect } from 'react';
 
@@ -52,6 +53,7 @@ const NAV: NavItem[] = [
   { href: '/users', label: 'Users', icon: <Users size={18} />, roles: ['hr_admin'] },
   { href: '/cycles', label: 'Cycles', icon: <Settings2 size={18} />, roles: ['hr_admin'] },
   { href: '/hr/reports', label: 'Reports', icon: <BarChart2 size={18} />, roles: ['hr_admin'] },
+  { href: '/hr/templates', label: 'Export templates', icon: <FileSpreadsheet size={18} />, roles: ['hr_admin'] },
   { href: '/hr', label: 'HR Dashboard', icon: <BarChart3 size={18} />, roles: ['hr_admin'] },
   { href: '/settings/notifications', label: 'Notification settings', icon: <Bell size={18} /> },
 ];
