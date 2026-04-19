@@ -1,12 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import type { TenantId } from '@skillforge/tenant-guard';
-import * as crypto from 'node:crypto';
 
 // ── Mocks ────────────────────────────────────────────────────────────
-const prismaArtifactUpdate = vi.fn();
 vi.mock('@skillforge/db', () => ({
-  prisma: { artifact: { update: (...args: unknown[]) => prismaArtifactUpdate(...args) } },
+  prisma: {},
   prismaAdmin: {},
 }));
 
@@ -24,6 +22,10 @@ vi.mock('node:fs/promises', () => ({
 // Import AFTER mocks
 import { ArtifactService } from './artifact.service';
 import { LocalStorageProvider } from './storage/local-storage.provider';
+import {
+  signArtifactToken,
+  __resetArtifactTokenSecretCache,
+} from './storage/artifact-token';
 import * as fs from 'node:fs/promises';
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -35,25 +37,18 @@ const ARTIFACT_ID = '55555555-5555-4555-8555-555555555555';
 
 type TxDouble = {
   assessment: { findFirst: ReturnType<typeof vi.fn> };
-  artifact: { create: ReturnType<typeof vi.fn> };
+  artifact: {
+    create: ReturnType<typeof vi.fn>;
+    updateMany: ReturnType<typeof vi.fn>;
+    findFirst: ReturnType<typeof vi.fn>;
+  };
 };
 
 function makeTx(): TxDouble {
   return {
     assessment: { findFirst: vi.fn() },
-    artifact: { create: vi.fn() },
+    artifact: { create: vi.fn(), updateMany: vi.fn(), findFirst: vi.fn() },
   };
-}
-
-function signUploadToken(
-  artifactId: string,
-  secret = process.env.JWT_SECRET ?? 'dev',
-) {
-  return crypto
-    .createHmac('sha256', secret)
-    .update(`upload:${artifactId}`)
-    .digest('hex')
-    .slice(0, 48);
 }
 
 const baseDto = {
@@ -70,7 +65,10 @@ describe('ArtifactService', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    process.env.JWT_SECRET = 'test-secret-value';
+    // >= 32 chars so the prod-safety guard in artifact-token.ts is fine
+    // under any NODE_ENV the test harness might set.
+    process.env.JWT_SECRET = 'test-jwt-secret-value-xxxxxxxxxxxxx';
+    __resetArtifactTokenSecretCache();
     // Force local mode regardless of caller env so the token shape is stable
     process.env.STORAGE_MODE = 'local';
     svc = new ArtifactService(new LocalStorageProvider());
@@ -120,40 +118,38 @@ describe('ArtifactService', () => {
       expect(out.artifactId).toBe(ARTIFACT_ID);
       expect(out.uploadUrl).toMatch(new RegExp(`^/artifacts/${ARTIFACT_ID}/upload\\?token=`));
       expect(out.headers).toEqual({ 'content-type': 'application/pdf' });
-      // Token prefix should be 48 hex chars
+      // Token should now be a three-segment JWT (header.payload.sig).
       const token = out.uploadUrl.split('token=')[1];
-      expect(token).toMatch(/^[0-9a-f]{48}$/);
+      expect(token.split('.')).toHaveLength(3);
     });
   });
 
   describe('acceptUpload()', () => {
-    it('rejects an invalid HMAC token', async () => {
-      const badToken = 'a'.repeat(48);
+    it('rejects a garbage token string', async () => {
       await expect(
-        svc.acceptUpload(ARTIFACT_ID, badToken, Buffer.from('x'), 'application/pdf'),
+        svc.acceptUpload(ARTIFACT_ID, 'not-a-jwt', Buffer.from('x'), 'application/pdf'),
       ).rejects.toThrow(/Invalid or expired upload token/);
     });
 
-    it('rejects a token of wrong length (timing-safe compare guard)', async () => {
+    it('rejects a token whose artifactId claim does not match', async () => {
+      const otherArtifact = '66666666-6666-4666-8666-666666666666';
+      const token = await signArtifactToken('upload', otherArtifact, ORG_ID);
       await expect(
-        svc.acceptUpload(ARTIFACT_ID, 'short', Buffer.from('x'), 'application/pdf'),
+        svc.acceptUpload(ARTIFACT_ID, token, Buffer.from('x'), 'application/pdf'),
       ).rejects.toThrow(ForbiddenException);
     });
 
     it('rejects files > 25MB even when the token is valid', async () => {
-      const token = signUploadToken(ARTIFACT_ID);
+      const token = await signArtifactToken('upload', ARTIFACT_ID, ORG_ID);
       const big = Buffer.alloc(26 * 1024 * 1024);
       await expect(
         svc.acceptUpload(ARTIFACT_ID, token, big, 'application/pdf'),
       ).rejects.toThrow(/exceeds 25MB/);
     });
 
-    it('persists the file and updates prisma on success (valid token round-trip)', async () => {
-      const token = signUploadToken(ARTIFACT_ID);
-      prismaArtifactUpdate.mockResolvedValue({
-        id: ARTIFACT_ID,
-        fileUrl: `local://${ARTIFACT_ID}`,
-      });
+    it('persists the file and updates under withTenant(orgId) on success', async () => {
+      const token = await signArtifactToken('upload', ARTIFACT_ID, ORG_ID);
+      tx.artifact.updateMany.mockResolvedValue({ count: 1 });
 
       const result = await svc.acceptUpload(
         ARTIFACT_ID,
@@ -164,12 +160,24 @@ describe('ArtifactService', () => {
 
       expect(fs.mkdir).toHaveBeenCalledTimes(1);
       expect(fs.writeFile).toHaveBeenCalledTimes(1);
-      expect(prismaArtifactUpdate).toHaveBeenCalledWith({
+      // Critical: withTenant got the orgId the token carried (not a bypass).
+      expect(withTenantMock).toHaveBeenCalledWith(ORG_ID, expect.any(Function));
+      expect(tx.artifact.updateMany).toHaveBeenCalledWith({
         where: { id: ARTIFACT_ID },
         data: { fileUrl: `local://${ARTIFACT_ID}`, mimeType: 'application/pdf' },
-        select: { id: true, fileUrl: true },
       });
       expect(result.fileUrl).toBe(`local://${ARTIFACT_ID}`);
+    });
+
+    it('throws NotFound when the artifact row is absent in the token-scoped tenant', async () => {
+      // A token with orgId=X reaching an artifact that only exists in
+      // orgId=Y will hit `updateMany { count: 0 }` → 404, never an
+      // accidental cross-tenant write.
+      const token = await signArtifactToken('upload', ARTIFACT_ID, ORG_ID);
+      tx.artifact.updateMany.mockResolvedValue({ count: 0 });
+      await expect(
+        svc.acceptUpload(ARTIFACT_ID, token, Buffer.from('x'), 'application/pdf'),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 });

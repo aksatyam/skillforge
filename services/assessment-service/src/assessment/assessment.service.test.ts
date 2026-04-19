@@ -257,13 +257,22 @@ describe('AssessmentService', () => {
   });
 
   describe('submitManager()', () => {
-    const DEFAULT_DTO = {
+    // NOTE: intentionally NOT `as const` — `submitManager()` expects a mutable
+    // `responses: {...}[]`, so `as const` would produce a `readonly [...]` that
+    // TS rejects at the call site.
+    const DEFAULT_DTO: {
+      assessmentId: string;
+      managerScore: number;
+      rationale: string;
+      responses: { dimension: string; score: number }[];
+      overrodeAiSuggestion: boolean;
+    } = {
       assessmentId: ASSESSMENT_ID,
       managerScore: 4,
       rationale: 'solid work',
       responses: [{ dimension: 'd1', score: 4 }],
       overrodeAiSuggestion: false,
-    } as const;
+    };
 
     const setupAssessment = (overrides: Record<string, unknown> = {}) =>
       tx.assessment.findFirst.mockResolvedValue({

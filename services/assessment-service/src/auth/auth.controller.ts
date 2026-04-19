@@ -1,5 +1,6 @@
 import { Body, Controller, Get, HttpCode, Post } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import {
   AcceptInviteDtoSchema,
   LoginDtoSchema,
@@ -13,6 +14,12 @@ import { CurrentTenant } from '../common/decorators/current-tenant.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AuthService } from './auth.service';
 
+// Tight bucket for credential-bearing endpoints: the `short` limiter
+// defined in AppModule (10 req/min/IP). Brute-forcing a login or
+// refresh secret past that ceiling requires distributing across IPs,
+// which is cheap to alert on downstream.
+const AUTH_THROTTLE = { short: { limit: 10, ttl: 60_000 } } as const;
+
 const RefreshDto = z.object({ refreshToken: z.string().min(32) });
 
 @ApiTags('auth')
@@ -21,6 +28,7 @@ export class AuthController {
   constructor(private readonly auth: AuthService) {}
 
   @Public()
+  @Throttle(AUTH_THROTTLE)
   @Post('login')
   @HttpCode(200)
   async login(@Body() body: unknown) {
@@ -29,6 +37,7 @@ export class AuthController {
   }
 
   @Public()
+  @Throttle(AUTH_THROTTLE)
   @Post('refresh')
   @HttpCode(200)
   async refresh(@Body() body: unknown) {
@@ -45,6 +54,7 @@ export class AuthController {
   }
 
   @Public()
+  @Throttle(AUTH_THROTTLE)
   @Post('accept-invite')
   @HttpCode(200)
   async acceptInvite(@Body() body: unknown) {

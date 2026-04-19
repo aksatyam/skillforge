@@ -174,12 +174,14 @@ describe('CycleService', () => {
     it('transitioning from locked → open rejects when any assessment is already finalized', async () => {
       tx.assessmentCycle.findFirst.mockResolvedValue({ id: CYCLE_ID, status: 'locked' });
       tx.assessment.count.mockResolvedValue(2);
-      // `transition` routes `to === 'open'` through activate() — but activate only
-      // allows draft → open. The finalized-count check sits inside transition's
-      // locked-branch, which is reached by calling transition directly without
-      // going through the activate shortcut. We emulate that by verifying activate
-      // itself also refuses when status !== 'draft'.
-      await expect(svc.transition(ORG_ID, CYCLE_ID, 'open')).rejects.toThrow(/Cannot activate/);
+      // `transition(to='open')` on a locked cycle takes the unlock branch
+      // (post-Sprint-3 fix: activate() guards on draft-only, so the router
+      // doesn't short-circuit locked → open through it). The unlock branch
+      // refuses when any assessment has been finalized, since reopening
+      // would let a manager overwrite a signed score.
+      await expect(svc.transition(ORG_ID, CYCLE_ID, 'open')).rejects.toThrow(
+        /Cannot unlock.*finalized/,
+      );
     });
 
     it('transitions locked → closed happy path returns the updated cycle', async () => {

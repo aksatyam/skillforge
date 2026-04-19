@@ -161,6 +161,12 @@ export class ArtifactService {
   /**
    * Local-mode upload-completion callback. In s3 mode the browser PUTs
    * directly to S3 and this path is unreachable (controller returns 400).
+   *
+   * The upload token carries `orgId` (see artifact-token.ts) so the DB
+   * write goes through `withTenant(orgId, …)` and respects RLS. Prior
+   * Sprint-6 audit flagged the pre-token version as a tenant-bypass
+   * regression — it was the one place in the codebase that wrote to
+   * `prisma.artifact` without a tenant envelope.
    */
   async acceptUpload(
     artifactId: string,
@@ -177,28 +183,30 @@ export class ArtifactService {
       throw new BadRequestException('File exceeds 25MB limit');
     }
 
-    const { fileUrl } = await this.provider.acceptUpload({
+    const { fileUrl, orgId } = await this.provider.acceptUpload({
       artifactId,
       token,
       buffer,
       mimeType,
     });
 
-    // The token alone doesn't carry tenant info, so this write happens
-    // through prismaAdmin-bypass. The HMAC guard in the provider ensures
-    // only holders of the one-shot token can trigger it.
-    const { prisma } = await import('@skillforge/db');
-    const updated = await prisma.artifact.update({
-      where: { id: artifactId },
-      data: { fileUrl, mimeType },
-      select: { id: true, fileUrl: true },
+    return withTenant(orgId as TenantId, async (tx) => {
+      // Scoped by {id, orgId} — belt-and-braces with RLS: the WHERE
+      // clause ensures a forged token claiming orgId=X can't reach a
+      // row in orgId=Y even if RLS were somehow disabled.
+      const updated = await tx.artifact.updateMany({
+        where: { id: artifactId },
+        data: { fileUrl, mimeType },
+      });
+      if (updated.count === 0) throw new NotFoundException();
+      return { id: artifactId, fileUrl };
     });
-    return updated;
   }
 
   /**
-   * Local-mode download streamer. Verifies the HMAC download token and
-   * returns the raw bytes + content headers. Throws 400 in s3 mode.
+   * Local-mode download streamer. Verifies the signed download token,
+   * extracts orgId from it, and scopes the row lookup via withTenant.
+   * Throws 400 in s3 mode (browser is redirected to the presigned URL).
    */
   async streamLocalDownload(
     artifactId: string,
@@ -209,20 +217,22 @@ export class ArtifactService {
         'Direct download is disabled in s3 mode — use the presigned URL',
       );
     }
-    const { prisma } = await import('@skillforge/db');
-    const artifact = await prisma.artifact.findUnique({
-      where: { id: artifactId },
-      select: { fileName: true, mimeType: true },
-    });
-    if (!artifact) throw new NotFoundException();
 
     const local = this.provider as LocalStorageProvider;
-    const buffer = await local.readArtifactBytes(artifactId, token);
-    return {
-      buffer,
-      fileName: artifact.fileName ?? `${artifactId}.bin`,
-      mimeType: artifact.mimeType ?? 'application/octet-stream',
-    };
+    const { buffer, claims } = await local.readArtifactBytes(artifactId, token);
+
+    return withTenant(claims.orgId as TenantId, async (tx) => {
+      const artifact = await tx.artifact.findFirst({
+        where: { id: artifactId, deletedAt: null },
+        select: { fileName: true, mimeType: true },
+      });
+      if (!artifact) throw new NotFoundException();
+      return {
+        buffer,
+        fileName: artifact.fileName ?? `${artifactId}.bin`,
+        mimeType: artifact.mimeType ?? 'application/octet-stream',
+      };
+    });
   }
 
   async list(orgId: TenantId, userId: string, assessmentId: string) {

@@ -1,31 +1,40 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 // ── Mock the AWS SDKs before importing the provider ────────────────
-// We capture every command the provider sends so the assertions can
-// inspect Bucket/Key/ContentType without actually talking to S3.
-const sentCommands: Array<{
-  name: string;
-  input: Record<string, unknown>;
-}> = [];
+// Vitest hoists `vi.mock(...)` calls above every module-level statement,
+// so any variable the factory references must also be hoisted — that's
+// what `vi.hoisted()` is for. Without it, `FakeS3Client` and friends
+// are in the temporal dead zone when the factory runs.
+const { sentCommands, FakeS3Client, FakePutCommand, FakeGetCommand } =
+  vi.hoisted(() => {
+    const sent: Array<{ name: string; input: Record<string, unknown> }> = [];
 
-class FakePutCommand {
-  readonly name = 'PutObjectCommand';
-  constructor(public readonly input: Record<string, unknown>) {
-    sentCommands.push({ name: this.name, input });
-  }
-}
+    class FakePutCommand {
+      readonly name = 'PutObjectCommand';
+      constructor(public readonly input: Record<string, unknown>) {
+        sent.push({ name: this.name, input });
+      }
+    }
 
-class FakeGetCommand {
-  readonly name = 'GetObjectCommand';
-  constructor(public readonly input: Record<string, unknown>) {
-    sentCommands.push({ name: this.name, input });
-  }
-}
+    class FakeGetCommand {
+      readonly name = 'GetObjectCommand';
+      constructor(public readonly input: Record<string, unknown>) {
+        sent.push({ name: this.name, input });
+      }
+    }
 
-class FakeS3Client {
-  // Captured for completeness; the real client also takes region + credentials.
-  constructor(public readonly cfg: Record<string, unknown> = {}) {}
-}
+    class FakeS3Client {
+      // Captured for completeness; the real client also takes region + creds.
+      constructor(public readonly cfg: Record<string, unknown> = {}) {}
+    }
+
+    return {
+      sentCommands: sent,
+      FakeS3Client,
+      FakePutCommand,
+      FakeGetCommand,
+    };
+  });
 
 vi.mock('@aws-sdk/client-s3', () => ({
   S3Client: FakeS3Client,
@@ -40,7 +49,10 @@ vi.mock('@aws-sdk/s3-request-presigner', () => ({
   getSignedUrl: vi.fn(
     async (
       _client: unknown,
-      command: FakePutCommand | FakeGetCommand,
+      // `FakePutCommand` / `FakeGetCommand` are destructured values out of
+      // `vi.hoisted()`, so they're value bindings — not types. Use
+      // `InstanceType<typeof X>` to get the matching instance type.
+      command: InstanceType<typeof FakePutCommand> | InstanceType<typeof FakeGetCommand>,
       opts: { expiresIn: number },
     ) => {
       const input = command.input as Record<string, string>;

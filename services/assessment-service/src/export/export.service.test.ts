@@ -92,7 +92,7 @@ describe('ExportService.exportCycleCsv()', () => {
   });
 
   it('emits BOM as the first character of output', async () => {
-    tx.assessmentCycle.findFirst.mockResolvedValue({ id: CYCLE_ID, name: 'Q2' });
+    tx.assessmentCycle.findFirst.mockResolvedValue({ id: CYCLE_ID, name: 'Q2', org: { settingsJson: null } });
     tx.assessment.findMany.mockResolvedValue([]);
     const result = await svc.exportCycleCsv(ORG_ID, CYCLE_ID);
     expect(result.csv.charCodeAt(0)).toBe(0xfeff);
@@ -100,7 +100,7 @@ describe('ExportService.exportCycleCsv()', () => {
   });
 
   it('writes a header row matching CSV_HEADERS exactly', async () => {
-    tx.assessmentCycle.findFirst.mockResolvedValue({ id: CYCLE_ID, name: 'Q2' });
+    tx.assessmentCycle.findFirst.mockResolvedValue({ id: CYCLE_ID, name: 'Q2', org: { settingsJson: null } });
     tx.assessment.findMany.mockResolvedValue([]);
     const { csv } = await svc.exportCycleCsv(ORG_ID, CYCLE_ID);
     const firstLine = csv.slice(BOM.length).split('\r\n')[0];
@@ -108,7 +108,7 @@ describe('ExportService.exportCycleCsv()', () => {
   });
 
   it('generates one data row per assessment with correct columns', async () => {
-    tx.assessmentCycle.findFirst.mockResolvedValue({ id: CYCLE_ID, name: 'Q2 FY26' });
+    tx.assessmentCycle.findFirst.mockResolvedValue({ id: CYCLE_ID, name: 'Q2 FY26', org: { settingsJson: null } });
     tx.assessment.findMany.mockResolvedValue([
       {
         id: 'a1',
@@ -147,7 +147,7 @@ describe('ExportService.exportCycleCsv()', () => {
   });
 
   it('escapes a comma in employee name by wrapping in quotes', async () => {
-    tx.assessmentCycle.findFirst.mockResolvedValue({ id: CYCLE_ID, name: 'Q2' });
+    tx.assessmentCycle.findFirst.mockResolvedValue({ id: CYCLE_ID, name: 'Q2', org: { settingsJson: null } });
     tx.assessment.findMany.mockResolvedValue([
       {
         id: 'a1',

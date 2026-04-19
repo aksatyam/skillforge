@@ -62,8 +62,14 @@ export const SsoExchangeDtoSchema = z.object({
 export type SsoExchangeDto = z.infer<typeof SsoExchangeDtoSchema>;
 
 // ── Organisation SSO config schema (read from settings_json.sso) ────
+//
+// `audience` is the OIDC `aud` claim we require in the idToken — this
+// is Keycloak's client_id by default. Stored per-tenant so two realms
+// can use the same SkillForge instance without sharing an audience;
+// falls back to KEYCLOAK_CLIENT_ID env for single-tenant deploys.
 const OrgSsoConfigSchema = z.object({
   issuer: z.string().url(),
+  audience: z.string().min(1).optional(),
   autoProvision: z.boolean().default(false),
   defaultRoleFamily: z.string().default('Unassigned'),
 });
@@ -84,8 +90,10 @@ export class AuthSsoService {
   constructor(private readonly jwt: JwtService) {}
 
   async exchange(dto: SsoExchangeDto): Promise<AuthTokens> {
-    const claims = await this.verifyIdToken(dto.idToken, dto.issuer);
-
+    // Resolve tenant FIRST (lightweight DB scan) so we know which
+    // audience to assert when verifying the idToken signature. If we
+    // verified without aud we'd accept any token Keycloak ever minted
+    // for this issuer — including tokens from unrelated client apps.
     const org = await this.findOrgByIssuer(dto.issuer);
     if (!org) {
       throw new UnauthorizedException(`No tenant configured for issuer ${dto.issuer}`);
@@ -95,6 +103,20 @@ export class AuthSsoService {
     if (!ssoConfig) {
       throw new UnauthorizedException(`Tenant ${org.id} has no SSO configuration`);
     }
+
+    const expectedAudience =
+      ssoConfig.audience ?? process.env.KEYCLOAK_CLIENT_ID;
+    if (!expectedAudience) {
+      // Fail closed: no audience to check → refuse rather than accept
+      // anything. Admins must set either settings_json.sso.audience or
+      // KEYCLOAK_CLIENT_ID. (Pre-audit this silently skipped the check.)
+      this.logger.error(
+        `SSO tenant ${org.id} has no audience configured and KEYCLOAK_CLIENT_ID is unset — refusing exchange`,
+      );
+      throw new UnauthorizedException('SSO audience not configured');
+    }
+
+    const claims = await this.verifyIdToken(dto.idToken, dto.issuer, expectedAudience);
 
     const user = await this.findOrProvisionUser(org.id, claims, ssoConfig);
 
@@ -107,20 +129,32 @@ export class AuthSsoService {
   }
 
   // ── idToken verification ─────────────────────────────────────────
-  private async verifyIdToken(idToken: string, issuer: string): Promise<IdTokenClaims> {
+  private async verifyIdToken(
+    idToken: string,
+    issuer: string,
+    audience: string,
+  ): Promise<IdTokenClaims> {
     const jwks = this.getJwks(issuer);
     let payload: unknown;
     try {
       const result = await jwtVerify(idToken, jwks, {
         issuer,
-        // audience left unchecked here; Keycloak sets aud=client_id which
-        // the BFF already owns — if in future we want to assert it, read
-        // from env KEYCLOAK_CLIENT_ID and pass here.
+        audience,
+        // jose enforces `exp` by default; `nbf` is ignored when absent.
       });
       payload = result.payload;
     } catch (err) {
+      // Keep the log terse (we don't want to leak token bytes). `err.code`
+      // from jose tells us which check failed — issuer / audience /
+      // signature / expiry — useful when debugging misconfigured realms.
+      const code =
+        err instanceof Error && 'code' in err
+          ? (err as { code: string }).code
+          : 'unknown';
       this.logger.warn(
-        `SSO idToken verify failed: ${err instanceof Error ? err.message : 'unknown'}`,
+        `SSO idToken verify failed: code=${code} msg=${
+          err instanceof Error ? err.message : 'unknown'
+        }`,
       );
       throw new UnauthorizedException('idToken signature or issuer invalid');
     }
@@ -226,10 +260,17 @@ export class AuthSsoService {
       throw new UnauthorizedException('SSO provider did not return an email claim');
     }
 
+    // `??` vs `||`: `.trim()` always returns a string, so `""` never
+    // triggers `??` — we have to use `||` so an empty string falls
+    // through to preferred_username / email. (Audit L2.)
+    const composedName = [claims.given_name, claims.family_name]
+      .filter(Boolean)
+      .join(' ')
+      .trim();
     const name =
-      claims.name ??
-      [claims.given_name, claims.family_name].filter(Boolean).join(' ').trim() ??
-      claims.preferred_username ??
+      claims.name ||
+      composedName ||
+      claims.preferred_username ||
       claims.email;
 
     const created = await prismaAdmin.user.create({

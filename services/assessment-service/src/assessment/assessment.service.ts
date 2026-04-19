@@ -61,7 +61,10 @@ export class AssessmentService {
     );
   }
 
-  async getById(orgId: TenantId, userId: string, assessmentId: string) {
+  // `userId` kept in the signature for call-site symmetry (and to signal who
+  // the caller is for future ownership enforcement), but we intentionally don't
+  // use it here — RLS + controller-level role guards already bound the row.
+  async getById(orgId: TenantId, _userId: string, assessmentId: string) {
     return withTenant(orgId, async (tx) => {
       const a = await tx.assessment.findFirst({
         where: { id: assessmentId, deletedAt: null },
@@ -156,8 +159,14 @@ export class AssessmentService {
         throw new BadRequestException(`Cannot edit self-assessment in status: ${a.status}`);
       }
 
+      // We store both `self` and `manager` submissions under the same JSON
+      // shape; typing them uniformly keeps the spread below assignable to
+      // Prisma's `InputJsonValue` (a bare `unknown` widens past JSON).
       const existing =
-        (a.responsesJson as { self?: AssessmentSubmissionJson; manager?: unknown } | null) ?? {};
+        (a.responsesJson as {
+          self?: AssessmentSubmissionJson;
+          manager?: AssessmentSubmissionJson;
+        } | null) ?? {};
       const nextSelf: AssessmentSubmissionJson = {
         responses: dto.responses,
         savedAt: new Date().toISOString(),
@@ -214,7 +223,10 @@ export class AssessmentService {
       const now = new Date();
       const selfScore = this.aggregateResponses(dto.responses);
       const existing =
-        (a.responsesJson as { self?: unknown; manager?: unknown } | null) ?? {};
+        (a.responsesJson as {
+          self?: AssessmentSubmissionJson;
+          manager?: AssessmentSubmissionJson;
+        } | null) ?? {};
       const selfBlock: AssessmentSubmissionJson = {
         responses: dto.responses,
         savedAt: now.toISOString(),
@@ -264,7 +276,10 @@ export class AssessmentService {
       );
 
       const existing =
-        (a.responsesJson as { self?: unknown; manager?: unknown } | null) ?? {};
+        (a.responsesJson as {
+          self?: AssessmentSubmissionJson;
+          manager?: AssessmentSubmissionJson;
+        } | null) ?? {};
       const now = new Date();
       const managerBlock: AssessmentSubmissionJson = {
         responses: dto.responses,

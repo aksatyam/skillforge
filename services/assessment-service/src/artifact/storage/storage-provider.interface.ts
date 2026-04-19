@@ -47,13 +47,17 @@ export interface StorageProvider {
    * Upload-completion callback. Only meaningful in local mode — the
    * service layer writes bytes into the configured filesystem directory.
    * In s3 mode, browsers upload directly to S3 so this hook is absent.
+   *
+   * Returns the token's decoded `orgId` so the service layer can scope
+   * the follow-up DB write via `withTenant()` — the token, not an env
+   * lookup, is the source of truth for the tenant this write belongs to.
    */
   acceptUpload?: (args: {
     artifactId: string;
     token: string;
     buffer: Buffer;
     mimeType: string;
-  }) => Promise<{ fileUrl: string }>;
+  }) => Promise<{ fileUrl: string; orgId: string }>;
 
   /** Lets callers branch on "local vs s3" without instanceof checks. */
   readonly mode: 'local' | 's3';

@@ -18,6 +18,7 @@ import {
   accessCookieAttrs,
   refreshCookieAttrs,
   assessmentApiBase,
+  checkSameOrigin,
 } from '@/lib/session-cookies';
 
 export const runtime = 'nodejs';
@@ -27,6 +28,11 @@ type ErrorBody = { ok: false; error: string };
 type SuccessBody = { ok: true };
 
 export async function POST(req: Request): Promise<NextResponse<ErrorBody | SuccessBody>> {
+  const originError = checkSameOrigin(req);
+  if (originError) {
+    return NextResponse.json({ ok: false, error: originError }, { status: 403 });
+  }
+
   let raw: unknown;
   try {
     raw = await req.json();

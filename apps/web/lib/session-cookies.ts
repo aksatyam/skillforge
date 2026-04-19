@@ -61,3 +61,49 @@ export function clearAccessCookieAttrs(): CookieAttrs {
 export function clearRefreshCookieAttrs(): CookieAttrs {
   return { ...baseAttrs(), path: REFRESH_PATH, maxAge: 0 };
 }
+
+// ── CSRF defense (ADR-013, Sprint 6 audit H2) ───────────────────────
+//
+// Our session cookies use SameSite=Lax, which blocks the obvious
+// cross-site POST. But Lax doesn't protect against:
+//   • GET→POST navigation by method override on intranet proxies
+//   • Cross-subdomain attack pages under SESSION_COOKIE_DOMAIN=.acme.com
+//   • Browser quirks that leak Lax cookies on top-level navigations
+//
+// So the state-changing BFF routes (login / refresh / logout / sso
+// callback bridge) additionally verify the request's Origin header
+// matches our own app origin. This is OWASP's "Verify Origin" pattern
+// — cheap, no tokens to rotate, fails closed when absent.
+//
+// `APP_BASE_URL` is the canonical same-origin URL configured per
+// environment (e.g. https://app.skillforge.ai); we accept it and any
+// comma-separated `APP_ORIGIN_ALLOWLIST` for preview deploys.
+
+export function allowedOrigins(): string[] {
+  const base = process.env.APP_BASE_URL ?? 'http://localhost:3000';
+  const extra = (process.env.APP_ORIGIN_ALLOWLIST ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return [base, ...extra].map((u) => u.replace(/\/+$/, ''));
+}
+
+/**
+ * Returns `null` if the request's Origin matches our app origin, or a
+ * descriptive error string otherwise. Caller issues 403 on failure.
+ *
+ * Null/absent Origin is rejected — every modern browser sends it on
+ * cross-origin AND same-origin POSTs, so absence implies either a
+ * non-browser client (curl, server-to-server — fine for our bypass
+ * paths) or a crafted attack. Call sites that legitimately accept
+ * non-browser traffic should bypass this check explicitly.
+ */
+export function checkSameOrigin(req: Request): string | null {
+  const origin = req.headers.get('origin');
+  if (!origin) return 'Missing Origin header';
+  const allow = allowedOrigins();
+  if (!allow.includes(origin.replace(/\/+$/, ''))) {
+    return `Origin ${origin} not in allowlist`;
+  }
+  return null;
+}

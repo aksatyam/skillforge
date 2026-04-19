@@ -12,12 +12,18 @@ import {
   clearAccessCookieAttrs,
   clearRefreshCookieAttrs,
   assessmentApiBase,
+  checkSameOrigin,
 } from '@/lib/session-cookies';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function POST(): Promise<NextResponse<{ ok: true }>> {
+export async function POST(req: Request): Promise<NextResponse<{ ok: true } | { ok: false; error: string }>> {
+  const originError = checkSameOrigin(req);
+  if (originError) {
+    return NextResponse.json({ ok: false, error: originError }, { status: 403 });
+  }
+
   const jar = cookies();
   const refresh = jar.get(REFRESH_COOKIE)?.value;
 

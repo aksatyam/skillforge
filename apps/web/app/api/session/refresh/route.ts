@@ -19,6 +19,7 @@ import {
   clearAccessCookieAttrs,
   clearRefreshCookieAttrs,
   assessmentApiBase,
+  checkSameOrigin,
 } from '@/lib/session-cookies';
 
 export const runtime = 'nodejs';
@@ -47,7 +48,12 @@ export async function refreshWithUpstream(refreshToken: string): Promise<AuthTok
   }
 }
 
-export async function POST(): Promise<NextResponse<SuccessBody | ErrorBody>> {
+export async function POST(req: Request): Promise<NextResponse<SuccessBody | ErrorBody>> {
+  const originError = checkSameOrigin(req);
+  if (originError) {
+    return NextResponse.json({ ok: false, error: originError }, { status: 403 });
+  }
+
   const jar = cookies();
   const refresh = jar.get(REFRESH_COOKIE)?.value;
 

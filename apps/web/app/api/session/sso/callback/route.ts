@@ -57,6 +57,32 @@ function loginRedirect(reason: string): NextResponse {
   return res;
 }
 
+/**
+ * Shape of the pre-normalised log envelope. We keep ONLY non-secret
+ * fields — `error`, `error_description`, `status` — never the token
+ * body or the Authorization header. An attacker who can read our server
+ * logs shouldn't get any closer to impersonating a user.
+ */
+function logSsoFailure(
+  where: 'keycloak' | 'bridge',
+  status: number,
+  body: unknown,
+): void {
+  const maybeObj =
+    typeof body === 'object' && body !== null
+      ? (body as Record<string, unknown>)
+      : null;
+  const payload = {
+    where,
+    status,
+    error: maybeObj?.error ?? null,
+    error_description: maybeObj?.error_description ?? null,
+    message: maybeObj?.message ?? null,
+  };
+  // eslint-disable-next-line no-console
+  console.error('[sso/callback] upstream failure', payload);
+}
+
 async function exchangeCodeAtKeycloak(
   code: string,
   codeVerifier: string,
@@ -81,9 +107,24 @@ async function exchangeCodeAtKeycloak(
       body: body.toString(),
       cache: 'no-store',
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      let parsed: unknown = null;
+      try {
+        parsed = await res.json();
+      } catch {
+        /* non-JSON error body — the status code is still informative */
+      }
+      logSsoFailure('keycloak', res.status, parsed);
+      return null;
+    }
     return (await res.json()) as KeycloakTokenResponse;
-  } catch {
+  } catch (err) {
+    // Network / DNS failure, rarely seen in steady state but worth
+    // logging — a mistyped KEYCLOAK_URL lands here silently otherwise.
+    // eslint-disable-next-line no-console
+    console.error('[sso/callback] keycloak fetch threw', {
+      message: err instanceof Error ? err.message : String(err),
+    });
     return null;
   }
 }
@@ -92,7 +133,13 @@ async function bridgeToAssessment(
   tokens: KeycloakTokenResponse,
 ): Promise<AuthTokens | null> {
   const bridgeSecret = process.env.SSO_BRIDGE_SECRET;
-  if (!bridgeSecret) return null;
+  if (!bridgeSecret) {
+    // eslint-disable-next-line no-console
+    console.error(
+      '[sso/callback] SSO_BRIDGE_SECRET is unset — refusing to bridge',
+    );
+    return null;
+  }
 
   try {
     const res = await fetch(`${assessmentApiBase()}/auth/sso/exchange`, {
@@ -110,9 +157,22 @@ async function bridgeToAssessment(
       }),
       cache: 'no-store',
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      let parsed: unknown = null;
+      try {
+        parsed = await res.json();
+      } catch {
+        /* non-JSON */
+      }
+      logSsoFailure('bridge', res.status, parsed);
+      return null;
+    }
     return (await res.json()) as AuthTokens;
-  } catch {
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[sso/callback] bridge fetch threw', {
+      message: err instanceof Error ? err.message : String(err),
+    });
     return null;
   }
 }
