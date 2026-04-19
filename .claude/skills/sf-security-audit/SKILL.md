@@ -14,6 +14,9 @@ Audits SkillForge code against the nine security areas listed in the plan §8, p
 - [ ] JWT expiry ≤ 15 min for access tokens; refresh tokens rotated
 - [ ] MFA enforcement for admin roles (`hr_admin`, `super_admin`, `ai_champion`)
 - [ ] SSO flow: SAML 2.0 signature verification, OIDC `nonce` check, `state` CSRF param
+- [ ] **OIDC `aud` claim** validated against `ssoConfig.audience ?? KEYCLOAK_CLIENT_ID` — realms have multiple clients; any-aud acceptance is a replay vector
+- [ ] **OIDC `iss` claim** validated against the tenant-configured realm URL
+- [ ] OIDC callback sanitises upstream error bodies before logging (`where / status / error / error_description` only — NEVER tokens or Authorization headers)
 - [ ] Session storage in Redis, not JWT payload (for revocation)
 
 ### 2. Authorization (RBAC)
@@ -41,11 +44,24 @@ Audits SkillForge code against the nine security areas listed in the plan §8, p
 - [ ] Audit log retention: ≥ 7 years per SOC 2
 
 ### 6. API Security (OWASP API Top 10)
-- [ ] Rate limiting at gateway (Kong/API Gateway)
+- [ ] Rate limiting at gateway (Kong/API Gateway) **AND** in-app via `@nestjs/throttler`
+  - [ ] `ThrottlerGuard` first in `APP_GUARD` chain (runs BEFORE JWT verification)
+  - [ ] Named buckets: `default` (120/min) for reads, `short` (10/min) for credential-y paths
+  - [ ] `@Throttle({ short: {...} })` on `/auth/login`, `/auth/refresh`, `/auth/accept-invite`, `/auth/sso/exchange`
+- [ ] Origin-header CSRF check on every state-changing BFF POST (`apps/web/app/api/**/route.ts`)
+  - [ ] `checkSameOrigin(req)` returns 403 on mismatch
+  - [ ] Allowlist driven by `APP_BASE_URL` + `APP_ORIGIN_ALLOWLIST`
 - [ ] Input validation: DTOs with `class-validator`, `forbidNonWhitelisted: true`
 - [ ] Output encoding in responses (no raw HTML from user input)
 - [ ] CORS: explicit allowlist, no `*`
 - [ ] GraphQL depth/complexity limits if GraphQL is used
+
+### 6a. Signed-URL / token-carries-tenant checks
+- [ ] Every signed short-lived URL (artifact upload/download, invite, verify) uses jose-signed JWT with **HS256** + `exp`
+- [ ] Claims include `orgId` + `scope` — consumer re-runs DB access under `withTenant(claims.orgId)` + `updateMany WHERE id` (404 if count=0)
+- [ ] `JWT_SECRET` has NO default fallback; production requires `>=32` chars (asserted at boot)
+- [ ] `SSO_BRIDGE_SECRET` has NO default; production requires `>=32` chars, dev allows `>=8`
+- [ ] Token verifier checks `scope` matches the handler's scope (upload token CAN'T pass at download endpoint)
 
 ### 7. Privacy (DPDP Act 2023)
 - [ ] Consent records stored with timestamp + version
