@@ -1,0 +1,139 @@
+[
+  {
+    "id": "emp-perf-01",
+    "source": "synthetic",
+    "input": "Ravi Kumar (ravi.kumar@demo.qualtech.ai, +91-98765-43210) submitted his Q3 self-assessment on 2026-04-15.",
+    "expected_pii": [
+      { "class": "person_name", "text": "Ravi Kumar" },
+      { "class": "email", "text": "ravi.kumar@demo.qualtech.ai" },
+      { "class": "phone_in", "text": "+91-98765-43210" }
+    ]
+  },
+  {
+    "id": "emp-perf-02",
+    "source": "synthetic",
+    "input": "Manager Priya Iyer (priya.iyer@qualtech.ai) rated Ravi at 3/5 on Technical Rigor.",
+    "expected_pii": [
+      { "class": "person_name", "text": "Priya Iyer" },
+      { "class": "email", "text": "priya.iyer@qualtech.ai" },
+      { "class": "person_name", "text": "Ravi" }
+    ]
+  },
+  {
+    "id": "artifact-summary-01",
+    "source": "synthetic",
+    "input": "Attached ADR by Karthik (employee QT-48213) explains the ORM switch to Prisma. Review before Friday.",
+    "expected_pii": [
+      { "class": "person_name", "text": "Karthik" },
+      { "class": "employee_id", "text": "QT-48213" }
+    ]
+  },
+  {
+    "id": "peer-feedback-01",
+    "source": "synthetic",
+    "input": "Shreya consistently mentors juniors like Yash and Anusha. PAN on file: AXPPS1234K.",
+    "expected_pii": [
+      { "class": "person_name", "text": "Shreya" },
+      { "class": "person_name", "text": "Yash" },
+      { "class": "person_name", "text": "Anusha" },
+      { "class": "pan", "text": "AXPPS1234K" }
+    ]
+  },
+  {
+    "id": "hr-comm-01",
+    "source": "synthetic",
+    "input": "Please verify Aadhaar 1234 5678 9012 against the ID proof uploaded by Rajesh Sharma at https://intranet.qualtech.ai/people/rajesh.sharma",
+    "expected_pii": [
+      { "class": "aadhaar", "text": "1234 5678 9012" },
+      { "class": "person_name", "text": "Rajesh Sharma" },
+      { "class": "url_with_user", "text": "https://intranet.qualtech.ai/people/rajesh.sharma" }
+    ]
+  },
+  {
+    "id": "escalation-01",
+    "source": "synthetic",
+    "input": "US counterpart Michael reached out via +1-415-555-2671 regarding Sanjay's performance plan.",
+    "expected_pii": [
+      { "class": "person_name", "text": "Michael" },
+      { "class": "phone_intl", "text": "+1-415-555-2671" },
+      { "class": "person_name", "text": "Sanjay" }
+    ]
+  },
+  {
+    "id": "artifact-summary-02",
+    "source": "synthetic",
+    "input": "Pull request from vikram.reddy@qualtech.ai closes ticket QT-ENG-00421. Ping Anil for review.",
+    "expected_pii": [
+      { "class": "email", "text": "vikram.reddy@qualtech.ai" },
+      { "class": "employee_id", "text": "QT-ENG-00421" },
+      { "class": "person_name", "text": "Anil" }
+    ]
+  },
+  {
+    "id": "peer-feedback-02",
+    "source": "synthetic",
+    "input": "Kavita has strong Communication and decent Code Review habits. Weighted average 3.6 vs team median 3.4.",
+    "expected_pii": [
+      { "class": "person_name", "text": "Kavita" }
+    ]
+  },
+  {
+    "id": "self-assess-01",
+    "source": "synthetic",
+    "input": "I (Deepika) want to rate myself 4 on Ownership. Evidence: led the Aviva migration with Partha and Ankit.",
+    "expected_pii": [
+      { "class": "person_name", "text": "Deepika" },
+      { "class": "person_name", "text": "Partha" },
+      { "class": "person_name", "text": "Ankit" }
+    ]
+  },
+  {
+    "id": "audit-01",
+    "source": "synthetic",
+    "input": "HR contact for Q3 cycle: hr-ops-india@qualtech.ai, desk +91 80 6789 1234.",
+    "expected_pii": [
+      { "class": "email", "text": "hr-ops-india@qualtech.ai" },
+      { "class": "phone_in", "text": "+91 80 6789 1234" }
+    ]
+  },
+  {
+    "id": "peer-feedback-03",
+    "source": "synthetic",
+    "input": "Negative signal: Tarun missed 3 standups; raised by Preeti during retro.",
+    "expected_pii": [
+      { "class": "person_name", "text": "Tarun" },
+      { "class": "person_name", "text": "Preeti" }
+    ]
+  },
+  {
+    "id": "escalation-02",
+    "source": "synthetic",
+    "input": "Loop in Hiring Manager Siddharth Menon and his skip Venkatesh on this thread.",
+    "expected_pii": [
+      { "class": "person_name", "text": "Siddharth Menon" },
+      { "class": "person_name", "text": "Venkatesh" }
+    ]
+  },
+  {
+    "id": "artifact-summary-03",
+    "source": "synthetic",
+    "input": "Quarterly review: Gautam (emp QT-00157) delivered 4 features. PAN ABCDE1234F on form 16.",
+    "expected_pii": [
+      { "class": "person_name", "text": "Gautam" },
+      { "class": "employee_id", "text": "QT-00157" },
+      { "class": "pan", "text": "ABCDE1234F" }
+    ]
+  },
+  {
+    "id": "no-pii-01",
+    "source": "synthetic",
+    "input": "Sprint 6 velocity was 48 story points. Q3 throughput up 12% YoY across Engineering.",
+    "expected_pii": []
+  },
+  {
+    "id": "no-pii-02",
+    "source": "synthetic",
+    "input": "OWASP ASVS L2 compliance gates are green. ADR-011 covers S3 storage provider rationale.",
+    "expected_pii": []
+  }
+]
