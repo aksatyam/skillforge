@@ -387,6 +387,44 @@ model AuditLog {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// FEATURE FLAG OVERRIDES (Phase 2.1 — per-org / per-user gating)
+// ═══════════════════════════════════════════════════════════════
+// Flag *definitions* live in code (packages/feature-flags/src/flags.ts).
+// This table stores only *overrides* — deviations from the default value.
+//
+// user_id semantics:
+//   NULL     → org-wide override (applies to every user in org)
+//   NOT NULL → per-user override (for A/B / canary; wins over org-wide)
+//
+// Every INSERT/UPDATE must be accompanied by an AuditLog row of
+// action='feature_flag.override_set' — enforced in FeatureFlagService,
+// not the DB (the DB can't know the actor/reason).
+
+model FeatureFlagOverride {
+  // Synthetic PK — Prisma disallows nullable columns in composite @@id.
+  // The real uniqueness constraint is on (flag_key, org_id, user_id) and
+  // lives in the SQL migration with COALESCE to force NULL collapse.
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  flagKey      String   @map("flag_key")
+  orgId        String   @map("org_id") @db.Uuid
+  userId       String?  @map("user_id") @db.Uuid
+  enabled      Boolean
+  createdById  String   @map("created_by") @db.Uuid
+  updatedById  String?  @map("updated_by") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Unique triple — matches the FeatureFlagService cache key shape.
+  // Prisma treats NULLs as distinct in @@unique, so we ALSO create a
+  // COALESCE-based unique index in the SQL migration to enforce
+  // "only one org-wide row per (flag, org)".
+  @@unique([flagKey, orgId, userId])
+  @@index([orgId])
+  @@index([flagKey])
+  @@map("feature_flag_overrides")
+}
+
+// ═══════════════════════════════════════════════════════════════
 // AI PROMPT TEMPLATE (Phase 2.1 — versioned Claude chain definitions)
 // ═══════════════════════════════════════════════════════════════
 // Distinct from PromptLibraryEntry (which is the user-facing shared
