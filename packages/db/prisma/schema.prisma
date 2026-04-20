@@ -74,6 +74,19 @@ enum Priority {
   high
 }
 
+enum AiPromptStatus {
+  draft
+  active
+  archived
+}
+
+enum AiSuggestionStatus {
+  pending
+  succeeded
+  failed
+  superseded
+}
+
 // ═══════════════════════════════════════════════════════════════
 // ORGANIZATIONS (tenants) — not itself tenant-scoped
 // ═══════════════════════════════════════════════════════════════
@@ -92,6 +105,7 @@ model Organization {
   frameworks           CompetencyFramework[]
   cycles               AssessmentCycle[]
   promptLibraryEntries PromptLibraryEntry[]
+  aiPromptTemplates    AiPromptTemplate[]
   auditLogs            AuditLog[]
 
   @@map("organizations")
@@ -237,6 +251,7 @@ model Assessment {
   artifacts               Artifact[]
   peerReviews             PeerReview[]
   learningRecommendations LearningRecommendation[]
+  aiSuggestions           AiSuggestion[]
 
   @@unique([cycleId, userId])
   @@index([cycleId])
@@ -369,6 +384,85 @@ model AuditLog {
   @@index([entityType, entityId])
   @@index([action])
   @@map("audit_log")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// AI PROMPT TEMPLATE (Phase 2.1 — versioned Claude chain definitions)
+// ═══════════════════════════════════════════════════════════════
+// Distinct from PromptLibraryEntry (which is the user-facing shared
+// prompt library). AiPromptTemplate rows are *internal* Claude chain
+// definitions consumed by AiEvaluationModule. ADR-013 §Decision 1b.
+//
+// org_id is NULLABLE: NULL = system-shipped template visible to all
+// tenants; non-null = org-specific override (Phase 2.3 feature). RLS
+// reads `org_id IS NULL OR org_id = current_org_id()` — NULL rows are
+// DPDP-safe because they carry zero tenant data by construction.
+
+model AiPromptTemplate {
+  id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orgId          String?        @map("org_id") @db.Uuid
+  templateKey    String         @map("template_key")   // e.g. "artifact.summarize", "score.suggest"
+  version        Int            @default(1)
+  name           String
+  description    String?        @db.Text
+  chainStepsJson Json           @map("chain_steps_json") // ordered: [{role, systemPrompt, userTemplate, outputSchema, modelVersion}]
+  status         AiPromptStatus @default(draft)
+  modelVersion   String         @map("model_version")    // default model; per-step override allowed in chain_steps_json
+  authorId       String?        @map("author_id") @db.Uuid // NULL for system-shipped templates
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt      DateTime?      @map("deleted_at") @db.Timestamptz(6)
+
+  org         Organization? @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  suggestions AiSuggestion[]
+
+  @@unique([orgId, templateKey, version])
+  @@index([orgId])
+  @@index([templateKey, status])
+  @@map("ai_prompt_templates")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// AI SUGGESTION (Phase 2.1 — per-assessment Claude output, append-only)
+// ═══════════════════════════════════════════════════════════════
+// Source of truth for AI scores. Assessment.ai_score is denormalized
+// from the latest `succeeded` row here — same pattern as
+// Assessment.manager_score being denormalized from responses_json.
+//
+// Rerun semantics: a new suggestion INSERTs a new row with status
+// 'pending' → 'succeeded' (or 'failed'). Any prior succeeded row for
+// the same assessment is marked 'superseded' in the same transaction.
+// Rows are NEVER DELETED — this is the AI-audit trail per ADR-013.
+//
+// RLS: scoped via assessment → cycle → org (same as artifacts, peer_reviews).
+
+model AiSuggestion {
+  id                    String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  assessmentId          String             @map("assessment_id") @db.Uuid
+  promptTemplateId      String             @map("prompt_template_id") @db.Uuid
+  inputHash             String             @map("input_hash")          // sha256 of canonicalized anonymized input
+  aiScore               Decimal?           @map("ai_score") @db.Decimal(5, 2)
+  confidence            Int?                                           // 0-100, matches Assessment.ai_confidence
+  rationaleText         String?            @map("rationale_text") @db.Text
+  rationaleCitationsJson Json?             @map("rationale_citations_json") // [{artifactId, snippet, confidence}]
+  modelVersion          String             @map("model_version")
+  promptCacheHit        Boolean            @default(false) @map("prompt_cache_hit")
+  costCents             Int                @default(0) @map("cost_cents")
+  latencyMs             Int?               @map("latency_ms")
+  status                AiSuggestionStatus @default(pending)
+  errorMessage          String?            @map("error_message") @db.Text
+  createdAt             DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  // NO updated_at: rows are immutable after terminal state. Status transitions
+  // (pending → succeeded/failed, or succeeded → superseded) mutate status only
+  // via service code that asserts the transition is legal.
+
+  assessment     Assessment       @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  promptTemplate AiPromptTemplate @relation(fields: [promptTemplateId], references: [id], onDelete: Restrict)
+
+  @@index([assessmentId, status, createdAt(sort: Desc)])
+  @@index([promptTemplateId])
+  @@index([inputHash])
+  @@map("ai_suggestions")
 }
 
 // ═══════════════════════════════════════════════════════════════
